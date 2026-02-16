@@ -1,0 +1,17 @@
+cdsapi
+xarray
+netCDF4
+h5netcdf
+pandas
+python-dotenv
+rioxarray
+tqdm
+earthengine-api
+dask
+zarr
+pyresample
+scipy
+rasterio
+pyhdf
+torch
+matplotlib
