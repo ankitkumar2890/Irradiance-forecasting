@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-DATA_PATH = "data_store/fno_dataset_month1.npz"
+DATA_PATH = "data_store/fno_dataset_2005.npz"
 
 print("Loading dataset...")
 data = np.load(DATA_PATH)

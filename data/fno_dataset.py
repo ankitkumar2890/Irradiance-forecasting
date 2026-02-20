@@ -1,8 +1,8 @@
 """
-Build FNO Dataset (One Month)
+Build FNO Dataset (Full Year)
 
 Merges:
-- ERA5 monthly NetCDF (9x9 grid)
+- ERA5 monthly NetCDF files (9x9 grid) — all 12 months
 - MODIS COT GeoTIFFs (~1 km grid)
 
 Outputs:
@@ -25,12 +25,15 @@ from datetime import datetime
 # =========================
 
 YEAR = 2005
-MONTH = 1
 
-ERA5_PATH = Path(f"data_store/ERA5_Input/2005/2005_01/data_0.nc")
+ERA5_DIR = Path(f"data_store/ERA5_Input/{YEAR}")
 MODIS_DIR = Path("data_store/MOD06L2_COT")
 
-OUTPUT_FILE = Path("data_store/fno_dataset_month1.npz")
+OUTPUT_FILE = Path(f"data_store/fno_dataset_{YEAR}1.npz")
+
+# Maximum allowed MODIS↔ERA5 pairing gap (minutes).
+# Samples outside this window are discarded to avoid wrong temporal pairing.
+MAX_TIME_DIFF_MINUTES = 60
 
 ERA5_VARIABLES = [
     "t2m",
@@ -45,23 +48,34 @@ ERA5_VARIABLES = [
 ]
 
 # =========================
-# LOAD ERA5
+# LOAD ERA5 (all months)
 # =========================
 
-print("Loading ERA5...")
-ds = xr.open_dataset(ERA5_PATH)
+print("Loading ERA5 (all months)...")
+
+era5_files = sorted(ERA5_DIR.glob("*/data_0.nc"))
+print(f"Found {len(era5_files)} ERA5 monthly files")
+
+if not era5_files:
+    raise FileNotFoundError(f"No ERA5 monthly files found under: {ERA5_DIR}")
+
+ds = xr.open_mfdataset(era5_files, combine="by_coords")
 
 time_dim = "time" if "time" in ds.dims else "valid_time"
 
 era5_times = ds[time_dim].values
 
+print(f"ERA5 time range: {era5_times[0]} to {era5_times[-1]}")
+
 # =========================
 # HELPER: match ERA5 time
 # =========================
 
-def get_nearest_era5_index(target_time):
+def get_nearest_era5_match(target_time):
     diffs = np.abs(era5_times - np.datetime64(target_time))
-    return int(np.argmin(diffs))
+    idx = int(np.argmin(diffs))
+    diff_minutes = int(diffs[idx] / np.timedelta64(1, "m"))
+    return idx, diff_minutes
 
 # =========================
 # PROCESS MODIS FILES
@@ -88,8 +102,8 @@ for tif_path in modis_files:
         "%Y-%m-%d %H:%M"
     )
 
-    # Only keep files in selected month
-    if modis_time.year != YEAR or modis_time.month != MONTH:
+    # Only keep files in selected year
+    if modis_time.year != YEAR:
         continue
 
     # Load MODIS COT
@@ -109,7 +123,13 @@ for tif_path in modis_files:
     # Match ERA5 time
     # =========================
 
-    era5_idx = get_nearest_era5_index(modis_time)
+    era5_idx, time_diff_minutes = get_nearest_era5_match(modis_time)
+    if time_diff_minutes > MAX_TIME_DIFF_MINUTES:
+        print(
+            f"  Skipping {tif_path.name}: nearest ERA5 is "
+            f"{time_diff_minutes} min away (> {MAX_TIME_DIFF_MINUTES})"
+        )
+        continue
 
     # =========================
     # Interpolate ERA5 → MODIS grid
@@ -160,12 +180,19 @@ for tif_path in modis_files:
 # FINALIZE DATASET
 # =========================
 
+if not X_list or not Y_list:
+    raise RuntimeError(
+        "No valid MODIS↔ERA5 pairs were produced. "
+        "Check time alignment, date range, and filtering thresholds."
+    )
+
 X = np.stack(X_list)
 Y = np.stack(Y_list)
 
-print("\nFinal tensor shapes:")
+print(f"\nFinal tensor shapes:")
 print("X:", X.shape)
 print("Y:", Y.shape)
+print(f"Total samples: {X.shape[0]}")
 
 np.savez_compressed(OUTPUT_FILE, X=X, Y=Y)
 

@@ -139,7 +139,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = ERA5MODISDataset("data_store/fno_dataset_month1.npz")
+    dataset = ERA5MODISDataset("data_store/fno_dataset_2005.npz")
     loader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     model = FNO2d(

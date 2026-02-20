@@ -39,7 +39,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 FAILED_DOWNLOADS_LOG = os.path.join(OUTPUT_DIR, "failed_downloads.txt")
 
-SKIP_DOWNLOAD = True
+SKIP_DOWNLOAD = False
 
 # =========================
 # DATE RANGE
