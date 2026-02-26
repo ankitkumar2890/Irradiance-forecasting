@@ -21,6 +21,7 @@ from rasterio.transform import from_bounds
 from rasterio.crs import CRS
 from pyhdf.SD import SD, SDC
 import requests
+from pathlib import Path
 
 # =========================
 # CONFIG
@@ -29,20 +30,18 @@ import requests
 LAADS_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImlyZmFuNyIsImV4cCI6MTc3NjE0NjQ1NywiaWF0IjoxNzcwOTYyNDU3LCJpc3MiOiJodHRwczovL3Vycy5lYXJ0aGRhdGEubmFzYS5nb3YiLCJpZGVudGl0eV9wcm92aWRlciI6ImVkbF9vcHMiLCJhY3IiOiJlZGwiLCJhc3N1cmFuY2VfbGV2ZWwiOjN9.0pYUSRC458lq9mJXgmurU_aqgkPi0h4FAb2ATls6dRXxEHb4u8MLS4RyZLSGYfX1JLrysOsAwPDtV02CCaD29mY8NVXeecxP1ts4eB1RV1C6zxvwrKbnLU5XllCzhXrTZ4-2LyNVa5-MnsS8d1g5d3RxiuEXRIeFz__Brja5VMXollV-fscz8f_L7_xcurWmfSbFn_woQfIaWbnBRkiL3arsV0ZY1egngbCnT0BhOPlFw_ixzYbSXZhIsvBYNjURWRWplk_-oOdnD7W_vxvuxidLV0Lu11nV9A3jgu3HoE0GbUb2AWdBx-mjJR_979M92cnFyyG90Bo6L7TqZ6lq9Q"
 
 
-START_DATE = "2005-01-01"
-END_DATE   = "2005-12-31"
+START_DATE = "2019-01-01"
+END_DATE   = "2019-12-31"
 
-SITE_LAT = 9.14
-SITE_LON = 77.92
-BUFFER_DEG = 1.0  # ±1° → ~222 km × 222 km (matches ERA5)
+# South India domain (9° x 9°), aligned with ERA5 tiling plan.
+MIN_LON = 72.5
+MAX_LON = 81.5
+MIN_LAT = 8.0
+MAX_LAT = 17.0
+DOMAIN_CENTER_LAT = 0.5 * (MIN_LAT + MAX_LAT)
 
-MIN_LON = SITE_LON - BUFFER_DEG
-MAX_LON = SITE_LON + BUFFER_DEG
-MIN_LAT = SITE_LAT - BUFFER_DEG
-MAX_LAT = SITE_LAT + BUFFER_DEG
-
-OUTPUT_DIR = "data_store/MOD06L2_COT"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR = Path("/content/drive/MyDrive/Irradiance-forecasting/MOD06L2_COT")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 SKIP_DOWNLOAD = False
 
@@ -55,8 +54,8 @@ UTC_MIN_HOUR = 3
 UTC_MAX_HOUR = 11
 
 # 2️⃣ IST daylight filter
-IST_START_HOUR = 6
-IST_END_HOUR   = 19
+IST_START_HOUR = 8
+IST_END_HOUR   = 18
 
 def is_valid_utc(hour):
     return UTC_MIN_HOUR <= hour <= UTC_MAX_HOUR
@@ -114,6 +113,10 @@ def list_files_for_date(date):
             doy_i  = int(date_part[5:8])
             hour   = int(time_part[:2])
             minute = int(time_part[2:4])
+
+            # Only HDF4 files (skip Collection 7 .nc files — incompatible with pyhdf)
+            if not name.endswith(".hdf"):
+                continue
 
             # UTC prefilter
             if not is_valid_utc(hour):
@@ -245,7 +248,7 @@ def extract_cot_to_geotiff(hdf_path, out_tif):
         swath_def = geometry.SwathDefinition(lons=lon, lats=lat)
 
         KM_PER_DEG_LAT = 111.0
-        KM_PER_DEG_LON = 111.0 * math.cos(math.radians(SITE_LAT))
+        KM_PER_DEG_LON = 111.0 * math.cos(math.radians(DOMAIN_CENTER_LAT))
 
         pixel_lat = 1.0 / KM_PER_DEG_LAT
         pixel_lon = 1.0 / KM_PER_DEG_LON
@@ -313,11 +316,11 @@ def main():
         for file_info in files:
 
             filename = file_info["name"]
-            output_path = os.path.join(OUTPUT_DIR, filename)
+            output_path = OUTPUT_DIR / filename
 
-            if not SKIP_DOWNLOAD and not os.path.exists(output_path):
+            if not SKIP_DOWNLOAD and not output_path.exists():
                 print("Downloading:", filename)
-                if not download_file(file_info["url"], output_path):
+                if not download_file(file_info["url"], str(output_path)):
                     continue
 
             parts = filename.split('.')
@@ -334,13 +337,19 @@ def main():
                 datetime.timedelta(doy - 1)
             ).strftime("%Y-%m-%d")
 
-            tif_path = os.path.join(
-                OUTPUT_DIR,
-                f"{timestamp}_{hour:02d}-{minute:02d}_COT.tif"
-            )
+            tif_path = OUTPUT_DIR / f"{timestamp}_{hour:02d}-{minute:02d}_COT.tif"
 
-            if extract_cot_to_geotiff(output_path, tif_path):
-                print("✓", os.path.basename(tif_path))
+            if tif_path.exists():
+                print("⏭ Already extracted:", tif_path.name)
+                continue
+
+            if extract_cot_to_geotiff(str(output_path), str(tif_path)):
+                print("✓", tif_path.name)
+
+            # Remove HDF after extraction (keep only .tif)
+            if output_path.exists():
+                output_path.unlink()
+                print("  🗑 Removed HDF:", filename)
 
     print("\nDone.")
 
