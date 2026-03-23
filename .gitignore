@@ -3,3 +3,10 @@ weather_project
 .venv
 data_store
 dataset
+task.py
+shards
+dataset_new
+Ground Truth Data
+data/__pycache__
+neural_operators/__pycache__
+time_series_models/__pycache__

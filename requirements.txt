@@ -15,3 +15,9 @@ rasterio
 pyhdf
 torch
 matplotlib
+gluonts 
+transformers 
+accelerate
+uni2ts @ git+https://github.com/SalesforceAIResearch/uni2ts.git
+planetary_computer
+rasterio

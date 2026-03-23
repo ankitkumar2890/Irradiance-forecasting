@@ -1,11 +1,12 @@
 """
-FNO2d – Test / Inference Script
-================================
-Loads a saved checkpoint and evaluates on the validation (or test) dataset.
+FNO2d – Test / Inference Script with HLS Landsat Feature Support
+===================================================================
+Loads a saved checkpoint and evaluates on train/validation/test dataset split.
 
 Usage:
-    python fno_test.py                          # uses defaults
+    python fno_test.py                          # uses test split by default
     python fno_test.py --checkpoint path/to/ckpt.pt --data path/to/val.npz
+    python fno_test.py --split validate
     python fno_test.py --num_samples 10         # visualise 10 random samples
 """
 
@@ -20,7 +21,15 @@ import torch
 from torch.utils.data import DataLoader
 
 # ── Re-use model & dataset classes from training script ──────────────
-from fno_train import ERA5MODISDataset, FNO2d, get_best_device, masked_mae, masked_mape, masked_mse
+from fno_train import (
+    ERA5HLSDataset,
+    FNO2d,
+    describe_channels,
+    get_best_device,
+    masked_mae,
+    masked_mape,
+    masked_mse,
+)
 
 # ── macOS fix: use 'spawn' to avoid fork-related crashes ─────────────
 if multiprocessing.get_start_method(allow_none=True) != "spawn":
@@ -48,6 +57,18 @@ def load_model_from_checkpoint(ckpt_path, device):
           f"width={cfg['width']}, in={cfg['in_channels']}, out={cfg['out_channels']}")
     print(f"  Best val MSE : {checkpoint.get('best_val_mse', 'N/A')}")
     print(f"  Epochs trained: {checkpoint.get('epochs_trained', 'N/A')}")
+
+    # Print channel info if saved in checkpoint
+    channel_info = checkpoint.get("channel_info", None)
+    if channel_info is not None:
+        n_data = channel_info.get("n_data_channels", "?")
+        n_total = channel_info.get("n_total_channels", "?")
+        n_hls = channel_info.get("n_hls", 0)
+        print(f"  Data channels: {n_data} (total w/ spatial+time: {n_total})")
+        if n_hls > 0:
+            print(f"  HLS Landsat:   {n_hls} feature channels + {channel_info.get('n_hls_mask', 1)} mask")
+        else:
+            print(f"  HLS Landsat:   DISABLED (ERA5-only model)")
 
     return model, checkpoint
 
@@ -139,7 +160,11 @@ def main():
     )
     parser.add_argument(
         "--data", type=str, default=None,
-        help="Path to validation/test .npz file (default: auto-detect)",
+        help="Path to .npz file (overrides --split if provided)",
+    )
+    parser.add_argument(
+        "--split", type=str, default="test", choices=["train", "validate", "test"],
+        help="Dataset split to evaluate when --data is not provided (default: test)",
     )
     parser.add_argument(
         "--batch_size", type=int, default=16,
@@ -157,17 +182,17 @@ def main():
 
     # Use local dataset directory (same layout as fno_train.py)
     base_dir = Path("/Users/IRFAN/Desktop/Irradiance-forecasting")
-    dataset_dir = base_dir / "dataset"
+    dataset_dir = base_dir / "dataset_new"
     ckpt_dir = base_dir / "checkpoints"
 
-    ckpt_path = Path(args.checkpoint) if args.checkpoint else Path("/Users/IRFAN/Desktop/Irradiance-forecasting/checkpoints/fno2d_best.pt")
+    ckpt_path = Path(args.checkpoint) if args.checkpoint else ckpt_dir / "fno2d_best.pt"
 
     if args.data:
         data_path = Path(args.data)
     else:
-        data_path = dataset_dir / "validate_clean.npz"
+        data_path = dataset_dir / f"{args.split}_clean.npz"
         if not data_path.exists():
-            data_path = dataset_dir / "validate.npz"
+            data_path = dataset_dir / f"{args.split}.npz"
 
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -192,27 +217,53 @@ def main():
             norm_stats = {"mean": ns["mean"], "std": ns["std"]}
             print(f"Using normalisation stats from: {norm_path}")
         else:
-            print("WARNING: No normalisation stats found — will compute from test data!")
+            print("WARNING: No normalisation stats found — will compute from evaluation data!")
             norm_stats = None
 
-    dataset = ERA5MODISDataset(data_path, norm_stats=norm_stats)
+    dataset = ERA5HLSDataset(data_path, norm_stats=norm_stats)
+
+    # ── Channel verification ─────────────────────────────────────────
+    print(f"\nDataset channels in .npz: {dataset.C}")
+    sample_x, _, _ = dataset[0]
+    expected_in = model.fc0.in_features
+    got_in = int(sample_x.shape[0])
+
+    print(f"Total input channels (with spatial/time): {got_in}")
+    print("Channel breakdown:")
+    print(describe_channels(dataset.C))
+
+    if got_in != expected_in:
+        raise ValueError(
+            f"Input-channel mismatch: dataset provides {got_in} channels but checkpoint model "
+            f"expects {expected_in}. Retrain with updated dataset features or use a matching checkpoint.\n"
+            f"Hint: The dataset has {dataset.C} data channels. If HLS was recently added/removed,\n"
+            f"regenerate the dataset with fno_dataset.py and retrain."
+        )
 
     pin = device.type == "cuda"
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, pin_memory=pin)
-    print(f"Test dataset: {len(dataset)} samples from {data_path}")
+    print(f"\nEvaluation split : {args.split if not args.data else 'custom'}")
+    print(f"Evaluation data  : {len(dataset)} samples from {data_path}")
 
     # ── Evaluate ─────────────────────────────────────────────────────
     print("\nEvaluating...")
     metrics = evaluate(model, loader, device)
 
-    print("\n" + "=" * 50)
-    print("  TEST RESULTS")
-    print("=" * 50)
+    print("\n" + "=" * 60)
+    print("  EVALUATION RESULTS")
+    print("=" * 60)
     print(f"  MSE  : {metrics['mse']:.6f}")
     print(f"  RMSE : {metrics['rmse']:.6f}")
     print(f"  MAE  : {metrics['mae']:.6f}")
     print(f"  MAPE : {metrics['mape']:.2f}%")
-    print("=" * 50)
+    print("=" * 60)
+
+    # ── Print training history from checkpoint if available ──────────
+    test_metrics_saved = checkpoint.get("test_metrics", None)
+    if test_metrics_saved is not None:
+        print("\nComparison with training-time test results:")
+        print(f"  Train-time test MSE : {test_metrics_saved.get('mse', 'N/A'):.6f}")
+        print(f"  Current eval MSE    : {metrics['mse']:.6f}")
 
     # ── Visualise ────────────────────────────────────────────────────
     save_path = None

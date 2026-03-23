@@ -4,20 +4,29 @@ from pathlib import Path
 import numpy as np
 import hashlib
 
-BASE = Path("/content/drive/MyDrive/Irradiance-forecasting/fno_dataset_10/dataset")
+BASE = Path("/Users/IRFAN/Desktop/Irradiance-forecasting/dataset_new")
 FILES = [
     ("train.npz", "train_clean.npz"),
     ("validate.npz", "validate_clean.npz"),
+    ("test.npz", "test_clean.npz"),
 ]
 
 # Tuning
 CONST_STD_TOL = 1e-8     # constant tile threshold
 ROUND_DECIMALS = 6       # for robust duplicate hashing (float noise safe)
 
-def sample_hash(x_sample: np.ndarray) -> str:
-    # x_sample shape: (C,H,W)
-    xq = np.round(x_sample, ROUND_DECIMALS).astype(np.float32, copy=False)
-    return hashlib.blake2b(xq.tobytes(), digest_size=16).hexdigest()
+def sample_hash(x_sample: np.ndarray, y_sample: np.ndarray) -> str:
+    """Hash full supervision pair (X, Y) to remove only exact duplicate samples."""
+    xq = np.round(np.nan_to_num(x_sample, nan=-9999.0), ROUND_DECIMALS).astype(
+        np.float32, copy=False
+    )
+    yq = np.round(np.nan_to_num(y_sample, nan=-9999.0), ROUND_DECIMALS).astype(
+        np.float32, copy=False
+    )
+    h = hashlib.blake2b(digest_size=16)
+    h.update(xq.tobytes())
+    h.update(yq.tobytes())
+    return h.hexdigest()
 
 def clean_file(in_name, out_name):
     in_path = BASE / in_name
@@ -47,8 +56,8 @@ def clean_file(in_name, out_name):
             n_const += 1
             continue
 
-        # 2) remove duplicate X
-        h = sample_hash(X[i])
+        # 2) remove duplicate (X, Y) pair
+        h = sample_hash(X[i], Y[i])
         if h in seen:
             n_dup += 1
             continue
