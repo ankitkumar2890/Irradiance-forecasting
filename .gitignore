@@ -1,0 +1,48 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+.python-version
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+venv311/
+.venv/
+env/
+ENV/
+
+# Logs
+*.log
+
+# Local project artifacts
+results/
+phase1_cloud_mapper/__pycache__/
+phase1_cloud_mapper/downloads/
+phase1_cloud_mapper/era5/
+phase1_cloud_mapper/results/
+phase1_cloud_mapper/checkpoints/
+
+phase2_finetuning/__pycache__/
+phase2_finetuning/downloads/
+phase2_finetuning/dataset/
+phase2_finetuning/results/
+phase2_finetuning/checkpoints/
+
+memory
