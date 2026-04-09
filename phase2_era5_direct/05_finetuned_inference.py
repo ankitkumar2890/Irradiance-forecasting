@@ -1,4 +1,4 @@
-"""Run fine-tuned Moirai (base + LoRA adapter) on the validation split."""
+"""Run the ERA5-direct fine-tuned Moirai model on the validation split."""
 import sys, json
 import torch
 import numpy as np
@@ -105,7 +105,7 @@ def main():
 
     rmse = np.sqrt(np.mean((all_preds - all_true) ** 2))
     mae = np.mean(np.abs(all_preds - all_true))
-    print(f"\n  Fine-tuned Validation — CAF RMSE: {rmse:.4f}  MAE: {mae:.4f}")
+    print(f"\n  ERA5-direct Validation — CAF RMSE: {rmse:.4f}  MAE: {mae:.4f}")
 
     metrics = {"CAF_RMSE": float(rmse), "CAF_MAE": float(mae)}
     with open(RESULTS_DIR / "finetuned_metrics.json", "w") as f:

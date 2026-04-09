@@ -1,13 +1,4 @@
-"""
-01_fetch_data.py — Download GHI (NREL), load Phase 1 synthetic ICON, compute clear-sky.
-
-Data sources:
-  1. GHI:       NREL NSRDB msg-iodc API (measured solar irradiance, IST)
-  2. ICON:      Phase 1 CloudMapper synthetic output (cloud_cover, UTC)
-  3. Clear-sky: PVLib Ineichen model (computed locally, IST)
-
-For 2017–2019, per station used in Phase 1.
-"""
+"""Prepare GHI, direct ERA5, and clear-sky inputs for the ERA5-only experiment."""
 import io, time, sys
 import pandas as pd
 import requests
@@ -15,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
-    DOWNLOADS_DIR, PHASE1_DOWNLOADS_DIR,
+    DOWNLOADS_DIR, ERA5_SOURCE_FILE,
     SELECTED_STATION, FINETUNE_STATION,
     YEARS, NREL_API_KEY, NREL_EMAIL,
 )
@@ -57,45 +48,46 @@ def fetch_nrel_ghi(year, lat, lon):
     raise RuntimeError(f"NREL fetch failed for {year}")
 
 
-def load_synthetic_icon():
-    """
-    Load Phase 1 CloudMapper synthetic ICON data (2017–2019).
-    
-    The synthetic file has columns: datetime, station_id, cloud_cover
-    Produced by Phase 1's generate_synthetic.py from ERA5 data.
-    """
-    src = PHASE1_DOWNLOADS_DIR / "icon_synthetic_2017_2019.csv"
-    if not src.exists():
+def load_direct_era5():
+    """Load raw ERA5 for the selected station and save yearly CSVs."""
+    if not ERA5_SOURCE_FILE.exists():
         raise FileNotFoundError(
-            f"Phase 1 synthetic ICON not found: {src}\n"
-            "Run Phase 1 generate_synthetic.py first."
+            f"Phase 1 ERA5 source not found: {ERA5_SOURCE_FILE}\n"
+            "Run Phase 1 fetch_data.py first."
         )
 
-    print(f"  Loading synthetic ICON from Phase 1: {src.name}")
-    df = pd.read_csv(src)
-    # Treat synthetic timestamps as already representing IST clock time.
-    # If the CSV includes a timezone suffix, strip it without shifting.
+    print(f"  Loading direct ERA5 from Phase 1: {ERA5_SOURCE_FILE.name}")
+    df = pd.read_csv(ERA5_SOURCE_FILE)
+    # Normalize the Phase 1 timezone-aware timestamps onto the same :00 clock
+    # used by the direct fine-tuning pipeline.
     dt = pd.to_datetime(df["datetime"])
     if getattr(dt.dt, "tz", None) is not None:
-        dt = dt.dt.tz_localize(None)
+        dt = dt.dt.tz_convert("UTC").dt.tz_localize(None)
     df["datetime"] = dt
 
-    # Filter to the fine-tuning station
     if "station_id" in df.columns:
         df = df[df["station_id"] == FINETUNE_STATION].copy()
         print(f"    Filtered to station: {FINETUNE_STATION}")
-    
-    # Split by year and save
+
     for year in YEARS:
         year_df = df[df["datetime"].dt.year == year].copy()
         if year_df.empty:
             print(f"    WARNING: No data for {year}")
             continue
-        out_cols = ["datetime", "cloud_cover"]
+        out_cols = [
+            "datetime",
+            "total_cloud_cover",
+            "low_cloud_cover",
+            "medium_cloud_cover",
+            "high_cloud_cover",
+            "cloud_liquid_water",
+            "cloud_ice_water",
+            "water_vapour",
+        ]
         year_df = year_df[out_cols].sort_values("datetime").reset_index(drop=True)
-        out = DOWNLOADS_DIR / f"icon_{year}.csv"
+        out = DOWNLOADS_DIR / f"era5_{year}.csv"
         year_df.to_csv(out, index=False)
-        print(f"    icon_{year}.csv  shape={year_df.shape}")
+        print(f"    era5_{year}.csv  shape={year_df.shape}")
 
 
 def generate_clearsky(year, lat, lon, alt_m):
@@ -138,8 +130,8 @@ if __name__ == "__main__":
             fetch_nrel_ghi(year, lat, lon)
 
     # 2. Synthetic ICON from Phase 1
-    print("\n=== Synthetic ICON (Phase 1 CloudMapper) ===")
-    load_synthetic_icon()
+    print("\n=== Direct ERA5 (Phase 1 raw source) ===")
+    load_direct_era5()
 
     # 3. Clear-sky (local PVLib computation)
     print("\n=== Clear-sky (PVLib) ===")
@@ -149,7 +141,7 @@ if __name__ == "__main__":
     # 4. Verify
     print("\n=== Verification ===")
     for year in YEARS:
-        for f in [f"ghi_{year}.csv", f"icon_{year}.csv", f"clearsky_{year}.csv"]:
+        for f in [f"ghi_{year}.csv", f"era5_{year}.csv", f"clearsky_{year}.csv"]:
             p = DOWNLOADS_DIR / f
             if p.exists():
                 df = pd.read_csv(p, nrows=2)

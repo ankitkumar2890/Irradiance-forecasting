@@ -1,5 +1,5 @@
 """
-03_build_dataset.py — Temporal split → sliding window .npy + GluonTS Arrow for fine-tuning.
+03_build_dataset.py — Temporal split → sliding window .npy + GluonTS Arrow for ERA5-direct fine-tuning.
 
 Split (3 years):
   Train: Jan 2017 – Dec 2018
@@ -25,7 +25,7 @@ from config import (
 
 
 def build_windows(df, split_name):
-    """Build sliding windows anchored at 06:00 IST."""
+    """Build sliding windows anchored at 06:00 on the normalized local clock."""
     X_past, X_future, y_future, times = [], [], [], []
 
     for i in range(len(df) - PAST_HOURS - FUTURE_HOURS + 1):

@@ -17,6 +17,7 @@
 # ==============================================================================
 import sys
 import json
+import random
 import numpy as np
 import pandas as pd
 import torch
@@ -31,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
-    DOWNLOADS_DIR, CHECKPOINT_DIR,
+    DOWNLOADS_DIR, CHECKPOINT_DIR, RESULTS_DIR as PHASE1_RESULTS_DIR,
     ERA5_FRACTION_COLS, ICON_COLS,
     HIDDEN_DIM, NUM_RES_BLOCKS, DROPOUT,
     BATCH_SIZE, EPOCHS, LR, WEIGHT_DECAY, PATIENCE,
@@ -39,9 +40,12 @@ from config import (
 )
 from features import build_all_features
 from model_architecture import TAFResNet
+from mapping_evaluation import evaluate_and_save_mapping_results
+from time_utils import to_ist_series
 
-RESULTS_DIR = Path(__file__).parent.parent / "results" / f"cloud_mapper_{VERSION}_validation"
+RESULTS_DIR = PHASE1_RESULTS_DIR / f"cloud_mapper_{VERSION}_validation"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+RANDOM_SEED = 42
 
 
 # ---------------------------------------------------------------------------
@@ -125,12 +129,14 @@ def apply_isotonic(preds, calibrators):
 # Training
 # ---------------------------------------------------------------------------
 def train():
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    torch.manual_seed(RANDOM_SEED)
+
     # ── 1. Load data ─────────────────────────────────────────────────────
     print("\n  ── Step 1: Loading data ──")
     era5 = pd.read_csv(DOWNLOADS_DIR / "era5_2022_2023.csv")
-    era5["datetime"] = pd.to_datetime(era5["datetime"], utc=True)
-    if TRAIN_STATION_ID and "station_id" in era5.columns:
-        era5 = era5[era5["station_id"] == TRAIN_STATION_ID].copy()
+    era5["datetime"] = to_ist_series(era5["datetime"])
     print(f"  ERA5: {len(era5)} rows, stations: "
           f"{sorted(era5['station_id'].unique()) if 'station_id' in era5.columns else 'single'}")
 
@@ -139,12 +145,32 @@ def train():
         p = DOWNLOADS_DIR / f
         if p.exists():
             df = pd.read_csv(p)
-            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+            df["datetime"] = to_ist_series(df["datetime"])
             if TRAIN_STATION_ID and "station_id" in df.columns:
                 df = df[df["station_id"] == TRAIN_STATION_ID].copy()
             icon_parts.append(df)
             print(f"  Loaded {f}: {len(df)} rows")
     icon = pd.concat(icon_parts, ignore_index=True)
+
+    if "station_id" in era5.columns and "station_id" in icon.columns:
+        available_stations = sorted(set(era5["station_id"].dropna().unique()) & set(icon["station_id"].dropna().unique()))
+    else:
+        available_stations = []
+
+    selected_station = TRAIN_STATION_ID
+    if available_stations:
+        if selected_station is None:
+            selected_station = random.Random(RANDOM_SEED).choice(available_stations)
+            print(f"  Randomly selected station (seed={RANDOM_SEED}): {selected_station}")
+        elif selected_station not in available_stations:
+            raise ValueError(
+                f"TRAIN_STATION_ID={selected_station!r} not present in both ERA5 and ICON datasets. "
+                f"Available: {available_stations}"
+            )
+        era5 = era5[era5["station_id"] == selected_station].copy()
+        icon = icon[icon["station_id"] == selected_station].copy()
+        print(f"  Using single-station subset: {selected_station}")
+        print(f"  Station rows → ERA5: {len(era5)} | ICON: {len(icon)}")
 
     # Merge on (datetime, station_id)
     merge_keys = ["datetime"]
@@ -173,12 +199,16 @@ def train():
     print(f"  ICON means: {merged[ICON_COLS].mean().round(3).to_dict()}")
 
     # ── 3. Train/val split ───────────────────────────────────────────────
-    print("\n  ── Step 3: Train/val split (80/20 time-based) ──")
-    unique_dt = pd.Series(merged["datetime"].sort_values().unique())
-    split_time = unique_dt.iloc[int(len(unique_dt) * 0.8)]
-    train_mask = merged["datetime"] < split_time
-    val_mask = ~train_mask
-    print(f"  Split time: {split_time}")
+    print("\n  ── Step 3: Train/val split (2022 train / 2023 validation) ──")
+    years = merged["datetime"].dt.year
+    train_mask = years == 2022
+    val_mask = years == 2023
+    if train_mask.sum() == 0 or val_mask.sum() == 0:
+        available_years = sorted(years.dropna().unique().tolist())
+        raise RuntimeError(
+            "Expected merged rows for both 2022 and 2023 after station filtering. "
+            f"Available years: {available_years}"
+        )
     print(f"  Train: {train_mask.sum()} rows, Val: {val_mask.sum()} rows")
 
     # Save raw ERA5 total_cloud_cover for α-blend residual (BEFORE scaling)
@@ -371,7 +401,30 @@ def train():
 
     era5_baseline_rmse = e["RMSE"]
 
-    # ── 15. Save ─────────────────────────────────────────────────────────
+    # ── 15. Shared metrics/plots artifacts ──────────────────────────────
+    report_data_path = RESULTS_DIR / "validation_report_data.csv"
+    val_predictions = pd.DataFrame({
+        "datetime": to_ist_series(val_datetimes),
+        "station_id": val_station_ids if val_station_ids else [selected_station] * len(targets),
+        "actual_cloud_cover": targets,
+        "predicted_cloud_cover": preds_cal,
+        "baseline_total_cloud_cover": val_era5_flat,
+        "error_cloud_cover": preds_cal - targets,
+        "hour": to_ist_series(val_datetimes).dt.hour,
+    })
+    val_predictions.to_csv(report_data_path, index=False)
+    print(f"\n  Validation report data saved → {report_data_path}")
+
+    evaluate_and_save_mapping_results(
+        datetimes=val_datetimes,
+        actual=targets.reshape(-1, 1),
+        predicted=preds_cal.reshape(-1, 1),
+        variable_names=ICON_COLS,
+        output_dir=RESULTS_DIR,
+        station_ids=val_station_ids if val_station_ids else None,
+    )
+
+    # ── 16. Save ─────────────────────────────────────────────────────────
     model.freeze()
     torch.save(model.state_dict(), CHECKPOINT_DIR / f"cloud_mapper_{VERSION}_frozen.pt")
     print(f"\n  Model saved → checkpoints/cloud_mapper_{VERSION}_frozen.pt")
@@ -385,6 +438,10 @@ def train():
         "num_res_blocks": NUM_RES_BLOCKS,
         "dropout": DROPOUT,
         "residual_skip": "total_cloud_cover",
+        "random_seed": RANDOM_SEED,
+        "selected_station": selected_station,
+        "train_years": [2022],
+        "val_years": [2023],
         "best_epoch": best_epoch,
         "best_val_rmse": float(best_rmse),
         "overall_rmse_calibrated": float(rmse_after),

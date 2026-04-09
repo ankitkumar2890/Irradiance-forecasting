@@ -14,6 +14,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from master_metrics import calculate_metrics, print_metrics
 from master_plots import set_style
+from time_utils import to_ist_series
 
 
 def plot_mapping_time_series(
@@ -87,7 +88,7 @@ def plot_mapping_4panel(
         scatter = ax4.scatter(hour_array, errors, c=actual, cmap="viridis", alpha=0.8, s=60, edgecolor="w")
         ax4.axhline(0, color="r", linestyle="dotted", linewidth=2)
         ax4.set_title("Prediction Bias by Hour", fontsize=14, weight="bold")
-        ax4.set_xlabel("Hour of Day (UTC)", fontsize=12)
+        ax4.set_xlabel("Hour of Day (IST)", fontsize=12)
         ax4.set_ylabel("Prediction Error", fontsize=12)
         cbar = plt.colorbar(scatter, ax=ax4)
         cbar.set_label("ICON Ground Truth")
@@ -121,7 +122,7 @@ def evaluate_and_save_mapping_results(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    datetimes = pd.to_datetime(pd.Series(datetimes), utc=True)
+    datetimes = to_ist_series(pd.Series(datetimes))
     station_ids = pd.Series(station_ids).reset_index(drop=True) if station_ids is not None else None
     actual = np.asarray(actual, dtype=float)
     predicted = np.asarray(predicted, dtype=float)

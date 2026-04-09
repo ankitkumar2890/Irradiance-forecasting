@@ -36,13 +36,15 @@ results/
 phase1_cloud_mapper/__pycache__/
 phase1_cloud_mapper/downloads/
 phase1_cloud_mapper/era5/
-phase1_cloud_mapper/results/
-phase1_cloud_mapper/checkpoints/
+
+
 
 phase2_finetuning/__pycache__/
 phase2_finetuning/downloads/
 phase2_finetuning/dataset/
-phase2_finetuning/results/
-phase2_finetuning/checkpoints/
+
+
+phase2_era5_direct/dataset/
+phase2_era5_direct/downloads
 
 memory

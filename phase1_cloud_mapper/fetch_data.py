@@ -36,6 +36,7 @@ from config import (
     CDSAPI_KEY,
     SAMPLE_ONE_STATION_PER_TIMESTEP,
 )
+from time_utils import to_ist_series
 
 
 # ==============================================================================
@@ -190,7 +191,7 @@ def extract_era5_to_csv(years: list[int], output_filename: str) -> None:
         raise RuntimeError(f"No ERA5 data found for years={years}")
 
     out_df = pd.concat(all_dfs, ignore_index=True).assign(
-        datetime=lambda d: pd.to_datetime(d["datetime"], utc=True)
+        datetime=lambda d: to_ist_series(d["datetime"])
     )
     output_cols = ["datetime", "station_id"] + [col for col in ERA5_OUTPUT_COLS if col in out_df.columns]
     out_df = (
@@ -278,7 +279,7 @@ def fetch_openmeteo_icon_station(start_date: str, end_date: str, station: dict) 
     print(f"      {station['id']} using model: {chosen_model}")
 
     hourly = chosen_payload["hourly"]
-    df = pd.DataFrame({"datetime": pd.to_datetime(hourly["time"], utc=True)})
+    df = pd.DataFrame({"datetime": to_ist_series(hourly["time"])})
     df["station_id"] = station["id"]
     for var in hourly_vars:
         raw = hourly.get(var)

@@ -10,9 +10,10 @@ ARROW_DIR      = DATASET_DIR / "arrow"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
 RESULTS_DIR    = BASE_DIR / "results"
 
-# Phase 1 synthetic ICON lives here:
+# Phase 1 raw ERA5 source lives here:
 PHASE1_DIR = PROJECT_ROOT / "phase1_cloud_mapper"
 PHASE1_DOWNLOADS_DIR = PHASE1_DIR / "downloads"
+ERA5_SOURCE_FILE = PHASE1_DOWNLOADS_DIR / "era5_2017_2019.csv"
 
 for d in [DOWNLOADS_DIR, DATASET_DIR, ARROW_DIR, CHECKPOINT_DIR, RESULTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -49,15 +50,37 @@ TEST_START  = "2020-01-01 00:00"
 PAST_HOURS   = 72
 FUTURE_HOURS = 24
 
-# Feature columns
-# Note: Phase 1 CloudMapper only produces cloud_cover (not low/mid/high)
+# Feature columns for the direct-ERA5 experiment
 PAST_FEATURES = [
-    "CAF", "clear_sky_ghi", "cloud_cover",
-    "zenith_angle", "hour_sin", "hour_cos", "doy_sin", "doy_cos",
+    "CAF",
+    "clear_sky_ghi",
+    "total_cloud_cover",
+    "low_cloud_cover",
+    "medium_cloud_cover",
+    "high_cloud_cover",
+    "cloud_liquid_water",
+    "cloud_ice_water",
+    "water_vapour",
+    "zenith_angle",
+    "hour_sin",
+    "hour_cos",
+    "doy_sin",
+    "doy_cos",
 ]
 FUTURE_FEATURES = [
-    "clear_sky_ghi", "cloud_cover",
-    "zenith_angle", "hour_sin", "hour_cos", "doy_sin", "doy_cos",
+    "clear_sky_ghi",
+    "total_cloud_cover",
+    "low_cloud_cover",
+    "medium_cloud_cover",
+    "high_cloud_cover",
+    "cloud_liquid_water",
+    "cloud_ice_water",
+    "water_vapour",
+    "zenith_angle",
+    "hour_sin",
+    "hour_cos",
+    "doy_sin",
+    "doy_cos",
 ]
 
 # ---- Model ----
@@ -65,7 +88,7 @@ MODEL_ID           = "Salesforce/moirai-1.1-R-small"
 CONTEXT_LENGTH     = PAST_HOURS
 PREDICTION_LENGTH  = FUTURE_HOURS
 TARGET_DIM         = 1
-FEAT_DIM           = len(FUTURE_FEATURES)  # 7
+FEAT_DIM           = len(FUTURE_FEATURES)
 
 # ---- LoRA Fine-Tuning ----
 LORA_RANK          = 16

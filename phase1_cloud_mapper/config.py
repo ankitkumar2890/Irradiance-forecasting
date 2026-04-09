@@ -10,8 +10,9 @@ BASE_DIR       = Path(__file__).resolve().parent
 DOWNLOADS_DIR  = BASE_DIR / "downloads"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
 ERA5_DIR       = BASE_DIR / "era5"
+RESULTS_DIR    = BASE_DIR / "results"
 
-for d in [DOWNLOADS_DIR, CHECKPOINT_DIR, ERA5_DIR]:
+for d in [DOWNLOADS_DIR, CHECKPOINT_DIR, ERA5_DIR, RESULTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # ---- API Keys ----

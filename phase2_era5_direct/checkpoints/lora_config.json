@@ -1,0 +1,12 @@
+{
+  "base_model": "Salesforce/moirai-1.1-R-small",
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "target_modules": [
+    "q_proj",
+    "v_proj"
+  ],
+  "best_val_mse": 0.01464084256440401,
+  "best_val_rmse": 0.12099934943793711,
+  "smoke_test": false
+}

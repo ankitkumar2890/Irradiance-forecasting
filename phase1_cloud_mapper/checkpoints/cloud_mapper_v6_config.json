@@ -1,0 +1,50 @@
+{
+  "version": "v6",
+  "architecture": "TAFResNet",
+  "input_cols": [
+    "total_cloud_cover",
+    "low_cloud_cover",
+    "medium_cloud_cover",
+    "high_cloud_cover",
+    "total_cloud_cover_lag1",
+    "low_cloud_cover_lag1",
+    "medium_cloud_cover_lag1",
+    "high_cloud_cover_lag1",
+    "hour_sin",
+    "hour_cos",
+    "doy_sin",
+    "doy_cos",
+    "lat_norm",
+    "lon_norm",
+    "alt_norm"
+  ],
+  "input_size": 15,
+  "hidden_dim": 64,
+  "num_res_blocks": 2,
+  "dropout": 0.25,
+  "residual_skip": "total_cloud_cover",
+  "random_seed": 42,
+  "selected_station": "chennai",
+  "train_years": [
+    2022
+  ],
+  "val_years": [
+    2023
+  ],
+  "best_epoch": 1,
+  "best_val_rmse": 0.24751652531858856,
+  "overall_rmse_calibrated": 0.24217334389686584,
+  "era5_fraction_cols": [
+    "total_cloud_cover",
+    "low_cloud_cover",
+    "medium_cloud_cover",
+    "high_cloud_cover"
+  ],
+  "icon_cols": [
+    "cloud_cover"
+  ],
+  "alphas": {
+    "cloud_cover": 0.598473846912384
+  },
+  "params": 18144
+}

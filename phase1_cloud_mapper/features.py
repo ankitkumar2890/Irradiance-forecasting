@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from config import ERA5_FRACTION_COLS, STATIONS
+from time_utils import to_ist_series
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ def add_time_features(df: pd.DataFrame, datetime_col: str = "datetime") -> pd.Da
     (unlike raw hour which has a discontinuity at midnight).
     """
     df = df.copy()
-    dt = pd.to_datetime(df[datetime_col], utc=True)
+    dt = to_ist_series(df[datetime_col])
     hour_angle = 2.0 * np.pi * (dt.dt.hour + dt.dt.minute / 60.0) / 24.0
     day_angle = 2.0 * np.pi * dt.dt.dayofyear / 365.25
     df["hour_sin"] = np.sin(hour_angle)

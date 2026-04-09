@@ -25,6 +25,7 @@ from config import (
 )
 from features import build_all_features
 from model_architecture import TAFResNet
+from time_utils import to_ist_series
 
 
 def load_frozen_mapper(device: torch.device, input_size: int) -> TAFResNet:
@@ -56,7 +57,7 @@ def generate_synthetic(years_label: str = "2017_2019") -> None:
 
     # Load ERA5
     era5 = pd.read_csv(DOWNLOADS_DIR / f"era5_{years_label}.csv")
-    era5["datetime"] = pd.to_datetime(era5["datetime"], utc=True)
+    era5["datetime"] = to_ist_series(era5["datetime"])
     if TRAIN_STATION_ID and "station_id" in era5.columns:
         era5 = era5[era5["station_id"] == TRAIN_STATION_ID].copy()
         print(f"  ERA5 station filter: {TRAIN_STATION_ID} → {len(era5)} rows")
@@ -145,4 +146,4 @@ if __name__ == "__main__":
     print(f"  Phase 1: Generating Synthetic ICON (2017-2019) — {VERSION}")
     print("=" * 55)
     generate_synthetic()
-    print("\nDone. Run feature alignment (Cell 9) next.")
+    print("\nDone.")

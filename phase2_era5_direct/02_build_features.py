@@ -1,15 +1,4 @@
-"""
-02_build_features.py — Merge GHI + synthetic ICON + clear-sky → CAF + temporal features.
-
-For each year (2017–2019):
-  1. Load ghi_{year}.csv (IST naive), icon_{year}.csv (synthetic ICON, treated as IST), clearsky_{year}.csv (IST naive)
-  2. Normalize GHI and ICON onto the common IST-naive hourly clock
-  3. Inner-join all three on datetime
-  4. Compute CAF = GHI / clear_sky_GHI  (clipped [0,1], night = 0)
-  5. Add temporal encodings (hour_sin/cos, doy_sin/cos)
-
-Output: dataset/processed_data_2017_2019.csv
-"""
+"""Merge GHI + direct ERA5 + clear-sky into the ERA5-only fine-tuning dataset."""
 import sys
 import numpy as np
 import pandas as pd
@@ -20,9 +9,9 @@ from config import DOWNLOADS_DIR, DATASET_DIR, YEARS
 
 
 def load_and_merge_year(year):
-    """Load and merge all 3 sources for a single year."""
+    """Load and merge GHI, direct ERA5, and clear-sky for a single year."""
     ghi = pd.read_csv(DOWNLOADS_DIR / f"ghi_{year}.csv")
-    icon = pd.read_csv(DOWNLOADS_DIR / f"icon_{year}.csv")
+    era5 = pd.read_csv(DOWNLOADS_DIR / f"era5_{year}.csv")
     cs = pd.read_csv(DOWNLOADS_DIR / f"clearsky_{year}.csv")
 
     # Parse datetimes
@@ -30,25 +19,20 @@ def load_and_merge_year(year):
     cs["datetime"] = pd.to_datetime(cs["datetime"])
 
     # NREL GHI is currently arriving on a :30 hourly grid.
-    # Shift it onto the top-of-hour grid so it aligns with synthetic ICON and clear-sky.
+    # Shift it onto the top-of-hour grid so it aligns with direct ERA5 and clear-sky.
     ghi_minutes = sorted(ghi["datetime"].dt.minute.dropna().unique().tolist())
     if ghi_minutes == [30]:
         ghi["datetime"] = ghi["datetime"] - pd.Timedelta(minutes=30)
 
-    # Treat synthetic ICON timestamps as already-local IST clock time.
-    # If a timezone suffix is present in the CSV, drop it without shifting.
-    icon_dt = pd.to_datetime(icon["datetime"])
-    if getattr(icon_dt.dt, "tz", None) is not None:
-        icon_dt = icon_dt.dt.tz_localize(None)
-    icon["datetime"] = icon_dt
+    era5["datetime"] = pd.to_datetime(era5["datetime"])
 
     # Dedup
-    for d in [ghi, icon]:
+    for d in [ghi, era5]:
         d.drop_duplicates(subset=["datetime"], keep="first", inplace=True)
 
-    # Interpolate clear-sky onto the GHI/ICON timestamp grid
+    # Interpolate clear-sky onto the GHI/ERA5 timestamp grid
     target_times = pd.Index(
-        sorted(set(ghi["datetime"]).intersection(set(icon["datetime"])))
+        sorted(set(ghi["datetime"]).intersection(set(era5["datetime"])))
     )
     interp_idx = (
         pd.DatetimeIndex(cs["datetime"])
@@ -67,12 +51,16 @@ def load_and_merge_year(year):
 
     # Merge
     df = (
-        icon.merge(cs, on="datetime", how="inner")
+        era5.merge(cs, on="datetime", how="inner")
         .merge(ghi, on="datetime", how="left")
     )
     df["w_ghr"] = df["w_ghr"].fillna(0.0).clip(lower=0)
     df["zenith_angle"] = df["zenith_angle"].fillna(95.0)
     df["clear_sky_ghi"] = df["clear_sky_ghi"].fillna(0.0).clip(lower=0)
+    for col in ["total_cloud_cover", "low_cloud_cover", "medium_cloud_cover", "high_cloud_cover"]:
+        df[col] = df[col].clip(0.0, 1.0)
+    for col in ["cloud_liquid_water", "cloud_ice_water", "water_vapour"]:
+        df[col] = df[col].clip(lower=0.0)
 
     print(f"  {year}: {len(df)} rows merged")
     return df
@@ -105,9 +93,10 @@ def main():
     df["doy_sin"] = np.sin(2 * np.pi * df["dayofyear"] / 365)
     df["doy_cos"] = np.cos(2 * np.pi * df["dayofyear"] / 365)
 
-    # Output columns (note: only cloud_cover, no cloud_low/mid/high)
     cols = [
-        "datetime", "CAF", "clear_sky_ghi", "cloud_cover",
+        "datetime", "CAF", "clear_sky_ghi",
+        "total_cloud_cover", "low_cloud_cover", "medium_cloud_cover", "high_cloud_cover",
+        "cloud_liquid_water", "cloud_ice_water", "water_vapour",
         "zenith_angle", "hour_sin", "hour_cos", "doy_sin", "doy_cos",
     ]
     df = df[cols].dropna().sort_values("datetime").reset_index(drop=True)
@@ -117,7 +106,7 @@ def main():
     print(f"\nSaved {out}  shape={df.shape}")
     print(f"  CAF: mean={df['CAF'].mean():.3f}  std={df['CAF'].std():.3f}")
     print(f"  Date range: {df['datetime'].iloc[0]} → {df['datetime'].iloc[-1]}")
-    print(f"  cloud_cover: mean={df['cloud_cover'].mean():.3f}")
+    print(f"  total_cloud_cover: mean={df['total_cloud_cover'].mean():.3f}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Evaluate fine-tuned validation predictions against measured GHI with shared metrics/plots utilities."""
+"""Evaluate ERA5-direct fine-tuned validation predictions against measured GHI."""
 import sys, json
 import numpy as np
 import pandas as pd
@@ -126,7 +126,7 @@ def main():
     )
 
     print("\n" + "=" * 55)
-    print("  FINE-TUNED MODEL — DAYTIME METRICS")
+    print("  ERA5-DIRECT MODEL — DAYTIME METRICS")
     print("=" * 55)
     for label, m in [("CAF", caf_m), ("GHI (W/m2)", ghi_m)]:
         print(f"\n  {label}:")
@@ -176,7 +176,7 @@ def main():
         json.dump(all_metrics, f, indent=2, default=str)
 
     report_lines = [
-        "FINE-TUNED MOIRAI EVALUATION REPORT",
+        "ERA5-DIRECT MOIRAI EVALUATION REPORT",
         f"Filter: measured GHI_true > {VALIDATION_GHI_FILTER_WM2:.0f} W/m^2",
         f"Rows evaluated: {len(validation_df)}",
         "",
@@ -212,14 +212,14 @@ def main():
         week["datetime"].to_numpy(),
         week["GHI_true"].to_numpy(),
         week["GHI_pred"].to_numpy(),
-        title="Fine-Tuned Moirai — Measured vs Predicted GHI (Filtered Validation Window)",
+        title="ERA5-Direct Moirai — Measured vs Predicted GHI (Filtered Validation Window)",
         save_path=str(RESULTS_DIR / "finetuned_timeseries.png"),
     )
     plot_4panel_evaluation(
         validation_df["GHI_true"].to_numpy(),
         validation_df["GHI_pred"].to_numpy(),
         hour_array=validation_df["hour"].to_numpy(),
-        title="Fine-Tuned Moirai — Validation GHI Evaluation",
+        title="ERA5-Direct Moirai — Validation GHI Evaluation",
         save_path=str(RESULTS_DIR / "finetuned_4panel.png"),
     )
 
