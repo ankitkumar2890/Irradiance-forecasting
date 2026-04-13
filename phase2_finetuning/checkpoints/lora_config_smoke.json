@@ -1,5 +1,5 @@
 {
-  "base_model": "Salesforce/moirai-1.1-R-small",
+  "base_model": "Salesforce/moirai-1.1-R-large",
   "lora_rank": 16,
   "lora_alpha": 32,
   "target_modules": [

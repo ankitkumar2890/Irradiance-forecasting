@@ -1,8 +1,12 @@
-"""Evaluate fine-tuned validation predictions against measured GHI with shared metrics/plots utilities."""
-import sys, json, argparse
+"""Evaluate fine-tuned Moirai 2.0 validation predictions with shared metrics/plots utilities."""
+import sys
+import json
+import shutil
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -15,7 +19,8 @@ from master_plots import plot_4panel_evaluation, plot_two_week_comparison
 from export_pdf import build_finetuned_pdf
 
 
-VALIDATION_GHI_FILTER_WM2 = 20.0
+DEFAULT_VALIDATION_GHI_FILTER_WM2 = 20.0
+PRED_SUFFIX = "_moirai2"
 ONE_WEEK_DAYS = 7
 RANDOM_WEEK_SEED = 42
 
@@ -97,31 +102,71 @@ def load_measured_ghi():
     return ghi.drop_duplicates(subset=["datetime"]).sort_values("datetime")
 
 
+def _copy_if_exists(src: Path, dst: Path):
+    if src.exists():
+        shutil.copyfile(src, dst)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--ghi-filter-wm2",
         type=float,
-        default=VALIDATION_GHI_FILTER_WM2,
+        default=DEFAULT_VALIDATION_GHI_FILTER_WM2,
         help="Only evaluate rows with measured GHI above this threshold.",
     )
     return parser.parse_args()
 
 
+def summarize_low_light_band(df, week_df, ghi_filter_wm2):
+    low_upper = 70.0
+    if ghi_filter_wm2 >= low_upper:
+        return
+
+    band = df[(df["GHI_true"] > ghi_filter_wm2) & (df["GHI_true"] <= low_upper)].copy()
+    week_band = week_df[
+        (week_df["GHI_true"] > ghi_filter_wm2) & (week_df["GHI_true"] <= low_upper)
+    ].copy()
+    if band.empty:
+        return
+
+    band["err"] = band["GHI_pred"] - band["GHI_true"]
+    week_band["err"] = week_band["GHI_pred"] - week_band["GHI_true"]
+
+    band_rmse = float(np.sqrt(np.mean(np.square(band["err"]))))
+    dawn_mask = band["clear_sky_ghi"] <= 1.0
+    dawn_rows = int(dawn_mask.sum())
+    dawn_bias = float(band.loc[dawn_mask, "err"].mean()) if dawn_rows else float("nan")
+
+    print("\n  Low-light diagnostic:")
+    print(f"    Band analyzed     : {ghi_filter_wm2:.0f} < GHI_true <= {low_upper:.0f} W/m^2")
+    print(f"    Validation rows   : {len(band)}")
+    print(f"    Band RMSE         : {band_rmse:.4f}")
+    print(f"    Rows with clear_sky_ghi <= 1: {dawn_rows}")
+    if dawn_rows:
+        print(f"    Mean error on those rows  : {dawn_bias:.4f}")
+    if not week_band.empty:
+        print(f"    One-week rows      : {len(week_band)}")
+        print(f"    One-week mean err  : {week_band['err'].mean():.4f}")
+        hour_counts = week_band["datetime"].dt.hour.value_counts().sort_index()
+        print("    One-week hour mix  : " + ", ".join(f"{int(h)}:00 x{int(c)}" for h, c in hour_counts.items()))
+
+
 def main():
     args = parse_args()
     ghi_filter_wm2 = float(args.ghi_filter_wm2)
-
-    # ---- Load predictions ----
-    pred_file = RESULTS_DIR / "finetuned_predictions.csv"
+    pred_file = RESULTS_DIR / f"finetuned_predictions{PRED_SUFFIX}.csv"
+    fallback_pred_file = RESULTS_DIR / "finetuned_predictions.csv"
     if not pred_file.exists():
-        print(f"Error: {pred_file} not found. Run 05_finetuned_inference.py first.")
-        sys.exit(1)
+        if fallback_pred_file.exists():
+            pred_file = fallback_pred_file
+        else:
+            print(f"Error: {pred_file} not found. Run 05_finetuned_inference_moirai2.py first.")
+            sys.exit(1)
 
     df = pd.read_csv(pred_file)
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    # ---- Load processed features + measured GHI ----
     proc = pd.read_csv(DATASET_DIR / "processed_data_2017_2019.csv")
     proc["datetime"] = pd.to_datetime(proc["datetime"])
     ghi = load_measured_ghi()
@@ -138,16 +183,15 @@ def main():
         print("This usually means the timestamp grids still do not match between predictions and ghi_*.csv.")
         return
 
-    # ---- GHI recovery and measured-truth evaluation target ----
     df["GHI_true"] = df["w_ghr"]
     df["GHI_pred"] = df["CAF_pred"] * df["clear_sky_ghi"]
 
-    # ---- Post-reconstruction filter ----
     validation_df = df[df["GHI_true"] > ghi_filter_wm2].copy()
     print(f"Total rows: {len(df)}  Filtered rows (GHI_true > {ghi_filter_wm2:.0f}): {len(validation_df)}")
     if validation_df.empty:
         print("No validation rows passed the post-reconstruction GHI filter.")
         return
+
     first_week_start = df["datetime"].min()
     first_week_plot_df = slice_window(df, first_week_start)
     first_week_metrics_df = slice_window(validation_df, first_week_start)
@@ -155,7 +199,6 @@ def main():
     random_week_plot_df = slice_window(df, random_week_start)
     random_week_metrics_df = slice_window(validation_df, random_week_start)
 
-    # ---- Persistence baseline on hourly timeline ----
     proc_full = (
         proc.merge(ghi, on="datetime", how="inner")
         .sort_values("datetime")
@@ -178,13 +221,11 @@ def main():
             np.mean((persist_eval["CAF_persist_24h"] - persist_eval["CAF_measured"]) ** 2)
         )
 
-    # ---- CAF Metrics (daytime) ----
     caf_m = compute_metrics(validation_df["CAF_true"].values, validation_df["CAF_pred"].values, "CAF_finetuned")
     caf_m["Skill_vs_persist"] = 1.0 - caf_m["RMSE"] / persist_rmse if persist_rmse > 0 else float("nan")
     first_week_caf_m = compute_metrics(first_week_metrics_df["CAF_true"].values, first_week_metrics_df["CAF_pred"].values, "CAF_week_1")
     random_week_caf_m = compute_metrics(random_week_metrics_df["CAF_true"].values, random_week_metrics_df["CAF_pred"].values, "CAF_random_week")
 
-    # ---- GHI Metrics (daytime) ----
     ghi_m = compute_metrics(validation_df["GHI_true"].values, validation_df["GHI_pred"].values, "GHI_finetuned")
     first_week_ghi_m = compute_metrics(first_week_metrics_df["GHI_true"].values, first_week_metrics_df["GHI_pred"].values, "GHI_week_1")
     random_week_ghi_m = compute_metrics(random_week_metrics_df["GHI_true"].values, random_week_metrics_df["GHI_pred"].values, "GHI_random_week")
@@ -195,7 +236,7 @@ def main():
     )
 
     print("\n" + "=" * 55)
-    print("  FINE-TUNED MODEL — DAYTIME METRICS")
+    print("  FINE-TUNED MOIRAI 2.0 — DAYTIME METRICS")
     print("=" * 55)
     for label, m in [("CAF", caf_m), ("GHI (W/m2)", ghi_m)]:
         print(f"\n  {label}:")
@@ -213,8 +254,8 @@ def main():
     print_metrics(first_week_ghi_m, title="ONE-WEEK GHI METRICS", unit="W/m²")
     print("\n  Random Later One-Week Window Metrics:")
     print_metrics(random_week_ghi_m, title="RANDOM ONE-WEEK GHI METRICS", unit="W/m²")
+    summarize_low_light_band(df, first_week_plot_df, ghi_filter_wm2)
 
-    # ---- Stratified ----
     print("\n  Stratified CAF RMSE:")
     for name, lo, hi in [("Clear (>0.7)", 0.7, 1.01), ("Partly (0.3-0.7)", 0.3, 0.7), ("Overcast (<0.3)", -0.01, 0.3)]:
         mask = (validation_df["CAF_true"] >= lo) & (validation_df["CAF_true"] < hi)
@@ -223,7 +264,6 @@ def main():
             r = np.sqrt(np.mean((sub["CAF_pred"] - sub["CAF_true"]) ** 2))
             print(f"    {name:20s}: RMSE={r:.4f}  N={len(sub)}")
 
-    # ---- Multi-horizon ----
     print("\n  RMSE by forecast hour:")
     horizon_rmse = {}
     if "lead_time_h" in validation_df.columns:
@@ -236,7 +276,6 @@ def main():
         if h in horizon_rmse:
             print(f"    +{h:2d}h: RMSE={horizon_rmse[h]:.4f}")
 
-    # ---- Save all metrics ----
     all_metrics = {
         "filters": {"ghi_true_gt_wm2": ghi_filter_wm2},
         "caf": caf_m,
@@ -248,12 +287,13 @@ def main():
         "ghi_master_metrics": {k: float(v) for k, v in master_ghi_m.items()},
         "persistence_rmse": float(persist_rmse),
         "horizon_rmse": horizon_rmse,
+        "source_prediction_file": pred_file.name,
     }
-    with open(RESULTS_DIR / "evaluation_metrics.json", "w") as f:
+    with open(RESULTS_DIR / f"evaluation_metrics{PRED_SUFFIX}.json", "w") as f:
         json.dump(all_metrics, f, indent=2, default=str)
 
     report_lines = [
-        "FINE-TUNED MOIRAI EVALUATION REPORT",
+        "FINE-TUNED MOIRAI 2.0 EVALUATION REPORT",
         f"Filter: measured GHI_true > {ghi_filter_wm2:.0f} W/m^2",
         f"Rows evaluated: {len(validation_df)}",
         "",
@@ -306,7 +346,7 @@ def main():
         report_lines.extend(
             [f"  +{lead:02d}h: {rmse:.4f}" for lead, rmse in sorted(horizon_rmse.items())]
         )
-    with open(RESULTS_DIR / "evaluation_report.txt", "w") as f:
+    with open(RESULTS_DIR / f"evaluation_report{PRED_SUFFIX}.txt", "w") as f:
         f.write("\n".join(report_lines) + "\n")
 
     plot_two_week_comparison(
@@ -315,8 +355,8 @@ def main():
         first_week_plot_df["GHI_pred"].to_numpy(),
         start=first_week_start,
         window_days=ONE_WEEK_DAYS,
-        title="Fine-Tuned Moirai — One-Week Measured vs Predicted GHI",
-        save_path=str(RESULTS_DIR / "finetuned_one_week_comparison.png"),
+        title="Fine-Tuned Moirai 2.0 — One-Week Measured vs Predicted GHI",
+        save_path=str(RESULTS_DIR / f"finetuned_one_week_comparison{PRED_SUFFIX}.png"),
         n_points=len(first_week_plot_df),
         metrics=first_week_ghi_m,
         ghi_threshold=ghi_filter_wm2,
@@ -327,8 +367,8 @@ def main():
         random_week_plot_df["GHI_pred"].to_numpy(),
         start=random_week_start,
         window_days=ONE_WEEK_DAYS,
-        title="Fine-Tuned Moirai — Random Later One-Week Measured vs Predicted GHI",
-        save_path=str(RESULTS_DIR / "finetuned_random_week_comparison.png"),
+        title="Fine-Tuned Moirai 2.0 — Random Later One-Week Measured vs Predicted GHI",
+        save_path=str(RESULTS_DIR / f"finetuned_random_week_comparison{PRED_SUFFIX}.png"),
         n_points=len(random_week_plot_df),
         metrics=random_week_ghi_m,
         ghi_threshold=ghi_filter_wm2,
@@ -337,8 +377,8 @@ def main():
         df["GHI_true"].to_numpy(),
         df["GHI_pred"].to_numpy(),
         hour_array=df["hour"].to_numpy(),
-        title="Fine-Tuned Moirai — Validation GHI Evaluation",
-        save_path=str(RESULTS_DIR / "finetuned_4panel.png"),
+        title="Fine-Tuned Moirai 2.0 — Validation GHI Evaluation",
+        save_path=str(RESULTS_DIR / f"finetuned_4panel{PRED_SUFFIX}.png"),
         n_points=len(df),
     )
 
@@ -348,26 +388,33 @@ def main():
         "GHI_true", "GHI_pred",
     ]].copy()
     validation_report["station_id"] = FINETUNE_STATION
-    validation_report.to_csv(RESULTS_DIR / "validation_report_data.csv", index=False)
+    validation_report.to_csv(RESULTS_DIR / f"validation_report_data{PRED_SUFFIX}.csv", index=False)
 
-    # ---- Plot 3: Horizon degradation ----
-    if horizon_rmse:
-        fig3, ax4 = plt.subplots(figsize=(10, 5))
-        hours = sorted(horizon_rmse.keys())
-        rmses = [horizon_rmse[h] for h in hours]
-        ax4.plot(hours, rmses, "o-", color="#1f77b4")
-        ax4.set_xlabel("Forecast Lead Time (h)")
-        ax4.set_ylabel("CAF RMSE")
-        ax4.set_title("Forecast Degradation Curve")
-        ax4.grid(True, alpha=0.3)
-        fig3.savefig(RESULTS_DIR / "finetuned_horizon_rmse.png", dpi=150, bbox_inches="tight")
-        plt.close()
-
-    build_finetuned_pdf(str(RESULTS_DIR), ghi_filter_wm2=ghi_filter_wm2)
+    std_csv = RESULTS_DIR / "validation_report_data.csv"
+    std_pdf = RESULTS_DIR / "finetuned_validation_report.pdf"
+    moirai2_pdf = RESULTS_DIR / "finetuned_validation_report_moirai2.pdf"
+    std_csv_backup = None
+    if std_csv.exists():
+        std_csv_backup = RESULTS_DIR / "validation_report_data.__backup__.csv"
+        shutil.copyfile(std_csv, std_csv_backup)
+    try:
+        shutil.copyfile(RESULTS_DIR / f"validation_report_data{PRED_SUFFIX}.csv", std_csv)
+        build_finetuned_pdf(str(RESULTS_DIR), ghi_filter_wm2=ghi_filter_wm2)
+        if std_pdf.exists():
+            shutil.copyfile(std_pdf, moirai2_pdf)
+    finally:
+        if std_csv_backup and std_csv_backup.exists():
+            shutil.move(std_csv_backup, std_csv)
+        elif std_csv.exists() and not validation_report.empty:
+            try:
+                std_csv.unlink()
+            except OSError:
+                pass
 
     print(f"\n  Plots saved → {RESULTS_DIR}/")
-    print(f"  Validation CSV saved → {RESULTS_DIR / 'validation_report_data.csv'}")
-    print(f"  Report saved → {RESULTS_DIR / 'evaluation_report.txt'}")
+    print(f"  Validation CSV saved → {RESULTS_DIR / f'validation_report_data{PRED_SUFFIX}.csv'}")
+    print(f"  Report saved → {RESULTS_DIR / f'evaluation_report{PRED_SUFFIX}.txt'}")
+    print(f"  PDF saved → {moirai2_pdf}")
     print("Done.")
 
 

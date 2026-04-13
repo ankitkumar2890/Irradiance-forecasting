@@ -4,6 +4,7 @@ import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 from matplotlib.backends.backend_pdf import PdfPages
 from datetime import datetime
@@ -17,6 +18,29 @@ OUT_PDF = os.path.join(BASE, "results", "persistence_results_report.pdf")
 
 # ── Style ──────────────────────────────────────────────────────────────────────
 STYLE = "seaborn-v0_8-darkgrid"
+ONE_WEEK_DAYS = 7
+RANDOM_WEEK_SEED = 42
+
+
+def _style_window_date_axis(ax, times_):
+    times_ = pd.to_datetime(np.asarray(times_))
+    if len(times_) == 0:
+        return
+
+    span_days = max((times_.max() - times_.min()) / np.timedelta64(1, "D"), 1)
+    if span_days <= 10:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    else:
+        locator = mdates.AutoDateLocator()
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
+    ax.tick_params(axis="x", labelsize=10, pad=6)
+    for label in ax.get_xticklabels():
+        label.set_rotation(28)
+        label.set_horizontalalignment("right")
+        label.set_verticalalignment("top")
 
 
 # ── Page helpers ───────────────────────────────────────────────────────────────
@@ -110,7 +134,7 @@ def _cloudmapper_cover_page(pdf, metrics_model, metrics_baseline, station_id, ro
     plt.close(fig)
 
 
-def _finetuned_cover_page(pdf, metrics_model, station_id, row_count, generated_at):
+def _finetuned_cover_page(pdf, metrics_model, station_id, row_count, generated_at, ghi_filter_wm2=20.0):
     plt.style.use(STYLE)
     fig = plt.figure(figsize=(11, 8.5))
     fig.patch.set_facecolor("#f7f9fc")
@@ -146,7 +170,7 @@ def _finetuned_cover_page(pdf, metrics_model, station_id, row_count, generated_a
         else:
             cell.set_facecolor("#dde8f5" if r % 2 == 0 else "#ffffff")
 
-    fig.text(0.5, 0.12, f"Filter: GHI_true > 20 W/m²  |  Validation rows: {row_count:,}",
+    fig.text(0.5, 0.12, f"Filter: GHI_true > {ghi_filter_wm2:.0f} W/m²  |  Validation rows: {row_count:,}",
              ha="center", fontsize=11, color="#555555")
 
     pdf.savefig(fig, bbox_inches="tight")
@@ -162,6 +186,7 @@ def _time_series_page(
     actual_label="Measured (Ground Truth)",
     predicted_label="Predicted GHI",
     y_label="Irradiance (W/m²)",
+    n_points=None,
 ):
     plt.style.use(STYLE)
     fig, ax = plt.subplots(figsize=(14, 6))
@@ -169,14 +194,156 @@ def _time_series_page(
             color="dodgerblue", linewidth=1.5, alpha=0.85)
     ax.plot(times_, predicted_, label=predicted_label,
             color="coral",      linewidth=1.5, linestyle="dashed")
-    ax.set_title(title, fontsize=15, fontweight="bold")
+    count = len(actual_) if n_points is None else n_points
+    ax.set_title(f"{title}\nN={count}", fontsize=15, fontweight="bold")
     ax.set_xlabel("Time", fontsize=12)
     ax.set_ylabel(y_label, fontsize=12)
     ax.legend(fontsize=11)
-    fig.autofmt_xdate()
+    _style_window_date_axis(ax, times_)
     plt.tight_layout()
     pdf.savefig(fig, bbox_inches="tight")
     plt.close(fig)
+
+
+def _two_week_comparison_page(
+    pdf,
+    times_,
+    actual_,
+    predicted_,
+    title,
+    window_days=14,
+    actual_label="Measured (Ground Truth)",
+    predicted_label="Predicted GHI",
+    y_label="Irradiance (W/m²)",
+    metrics=None,
+    ghi_threshold=None,
+):
+    plt.style.use(STYLE)
+    times_ = pd.to_datetime(times_)
+    actual_ = np.asarray(actual_, dtype=float)
+    predicted_ = np.asarray(predicted_, dtype=float)
+
+    if len(times_) == 0:
+        raise ValueError("No time points available for the comparison PDF page.")
+
+    order = np.argsort(times_)
+    times_ = times_[order]
+    actual_ = actual_[order]
+    predicted_ = predicted_[order]
+
+    start_ts = times_[0]
+    end_ts = start_ts + pd.Timedelta(days=window_days)
+    mask = (times_ >= start_ts) & (times_ < end_ts)
+    times_ = times_[mask]
+    actual_ = actual_[mask]
+    predicted_ = predicted_[mask]
+
+    if len(times_) == 0:
+        raise ValueError("No rows fell inside the comparison PDF window.")
+
+    fig = plt.figure(figsize=(14, 8))
+    gs = gridspec.GridSpec(2, 1, figure=fig, height_ratios=[3, 1], hspace=0.25)
+    ax = fig.add_subplot(gs[0, 0])
+    ax.plot(times_, actual_, label=actual_label, color="dodgerblue", linewidth=1.8, alpha=0.9)
+    ax.plot(times_, predicted_, label=predicted_label, color="coral", linewidth=1.8, linestyle="dashed")
+    if ghi_threshold is not None:
+        ax.axhline(
+            ghi_threshold,
+            label=f"{ghi_threshold:.0f} W/m² threshold",
+            color="black",
+            linewidth=2.5,
+            linestyle=(0, (7, 2, 2, 2)),
+            alpha=0.95,
+        )
+
+    under_mask = predicted_ < actual_
+    if np.any(under_mask):
+        ax.fill_between(
+            times_,
+            predicted_,
+            actual_,
+            where=under_mask,
+            interpolate=True,
+            color="crimson",
+            alpha=0.18,
+        )
+
+    over_mask = predicted_ > actual_
+    if np.any(over_mask):
+        ax.fill_between(
+            times_,
+            actual_,
+            predicted_,
+            where=over_mask,
+            interpolate=True,
+            color="seagreen",
+            alpha=0.10,
+        )
+
+    ax.set_title(f"{title}\nN={len(times_)}", fontsize=15, fontweight="bold")
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.legend(fontsize=11, ncol=2)
+    ax.grid(True, alpha=0.25)
+    fig.autofmt_xdate()
+
+    ax_tbl = fig.add_subplot(gs[1, 0])
+    ax_tbl.axis("off")
+    if metrics is not None:
+        rows = [
+            ("RMSE", f"{metrics['RMSE']:.2f}"),
+            ("nRMSE", f"{metrics['nRMSE']:.2f} %"),
+            ("MAE", f"{metrics['MAE']:.2f}"),
+            ("MAPE", f"{metrics['MAPE']:.2f} %"),
+            ("N", f"{metrics['N']:,}"),
+        ]
+        tbl = ax_tbl.table(
+            cellText=rows,
+            colLabels=["Metric", "Window"],
+            loc="center",
+            cellLoc="center",
+        )
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(12)
+        tbl.scale(1, 1.6)
+        for (r, c), cell in tbl.get_celld().items():
+            if r == 0:
+                cell.set_facecolor("#1a2e4a")
+                cell.set_text_props(color="white", fontweight="bold")
+            else:
+                cell.set_facecolor("#dde8f5" if r % 2 == 0 else "#ffffff")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _slice_window(df, start, days=ONE_WEEK_DAYS):
+    end = pd.to_datetime(start) + pd.Timedelta(days=days)
+    return df[(df["datetime"] >= start) & (df["datetime"] < end)].copy()
+
+
+def _choose_random_later_week_start(df, first_start, days=ONE_WEEK_DAYS, seed=RANDOM_WEEK_SEED):
+    latest_start = df["datetime"].max() - pd.Timedelta(days=days)
+    earliest_start = pd.to_datetime(first_start) + pd.Timedelta(days=days * 2)
+    candidate_days = (
+        df.loc[
+            (df["datetime"] >= earliest_start) &
+            (df["datetime"] <= latest_start),
+            "datetime",
+        ]
+        .dt.floor("D")
+        .drop_duplicates()
+        .sort_values()
+    )
+    if candidate_days.empty:
+        candidate_days = (
+            df.loc[df["datetime"] <= latest_start, "datetime"]
+            .dt.floor("D")
+            .drop_duplicates()
+            .sort_values()
+        )
+    if candidate_days.empty:
+        return pd.to_datetime(first_start) + pd.Timedelta(days=days)
+    return candidate_days.sample(1, random_state=seed).iloc[0]
 
 
 def _four_panel_page(
@@ -191,10 +358,12 @@ def _four_panel_page(
     error_unit="W/m²",
     colorbar_label="Measured GHI (W/m²)",
     error_vs_title="Error vs Incoming Radiation",
+    n_points=None,
 ):
     plt.style.use(STYLE)
     fig = plt.figure(figsize=(14, 10))
-    fig.suptitle(title, fontsize=16, fontweight="bold", y=0.99)
+    count = len(actual_) if n_points is None else n_points
+    fig.suptitle(f"{title}\nN={count}", fontsize=16, fontweight="bold", y=0.99)
     gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.38, wspace=0.32)
 
     # 1 — Scatter
@@ -266,10 +435,18 @@ def build_persistence_pdf(csv_path=CSV, out_pdf=OUT_PDF):
 
     with PdfPages(out_pdf) as pdf:
         _cover_page(pdf)
-        _time_series_page(pdf, times, actual, pred_caf, "Method A (CAF-based) — Actual vs Predicted GHI")
-        _four_panel_page(pdf, actual, pred_caf, errors_caf, hours, "Method A (CAF-based) — 4-Panel Evaluation")
-        _time_series_page(pdf, times_d, actual_d, pred_direct, "Method B (Direct GHI) — Actual vs Predicted GHI")
-        _four_panel_page(pdf, actual_d, pred_direct, errors_d, hours_d, "Method B (Direct GHI) — 4-Panel Evaluation")
+        _time_series_page(
+            pdf, times, actual, pred_caf, "Method A (CAF-based) — Actual vs Predicted GHI", n_points=len(actual)
+        )
+        _four_panel_page(
+            pdf, actual, pred_caf, errors_caf, hours, "Method A (CAF-based) — 4-Panel Evaluation", n_points=len(actual)
+        )
+        _time_series_page(
+            pdf, times_d, actual_d, pred_direct, "Method B (Direct GHI) — Actual vs Predicted GHI", n_points=len(actual_d)
+        )
+        _four_panel_page(
+            pdf, actual_d, pred_direct, errors_d, hours_d, "Method B (Direct GHI) — 4-Panel Evaluation", n_points=len(actual_d)
+        )
 
         meta = pdf.infodict()
         meta["Title"] = "Persistence Model — GHI Results Report"
@@ -327,6 +504,7 @@ def build_cloudmapper_pdf(results_dir):
             actual_label="Actual Cloud Cover",
             predicted_label="Predicted Cloud Cover",
             y_label="Cloud Cover Fraction",
+            n_points=len(actual),
         )
         _four_panel_page(
             pdf,
@@ -340,6 +518,7 @@ def build_cloudmapper_pdf(results_dir):
             error_unit="fraction",
             colorbar_label="Actual Cloud Cover",
             error_vs_title="Error vs Actual Cloud Cover",
+            n_points=len(actual),
         )
         _time_series_page(
             pdf,
@@ -350,6 +529,7 @@ def build_cloudmapper_pdf(results_dir):
             actual_label="Actual Cloud Cover",
             predicted_label="ERA5 Baseline Cloud Cover",
             y_label="Cloud Cover Fraction",
+            n_points=len(actual),
         )
         _four_panel_page(
             pdf,
@@ -363,6 +543,7 @@ def build_cloudmapper_pdf(results_dir):
             error_unit="fraction",
             colorbar_label="Actual Cloud Cover",
             error_vs_title="Error vs Actual Cloud Cover",
+            n_points=len(actual),
         )
 
         meta = pdf.infodict()
@@ -373,33 +554,79 @@ def build_cloudmapper_pdf(results_dir):
     print(f"PDF saved → {out_pdf}")
 
 
-def build_finetuned_pdf(results_dir):
+def build_finetuned_pdf(results_dir, ghi_filter_wm2=20.0):
     results_dir = os.path.abspath(results_dir)
     csv_path = os.path.join(results_dir, "validation_report_data.csv")
     out_pdf = os.path.join(results_dir, "finetuned_validation_report.pdf")
 
     df = pd.read_csv(csv_path, parse_dates=["datetime"])
-    df_day = df[df["GHI_true"] > 20].copy()
-    if df_day.empty:
-        raise ValueError("No rows passed the validation filter (GHI_true > 20 W/m²).")
+    df_metrics = df[df["GHI_true"] > ghi_filter_wm2].copy()
+    if df_metrics.empty:
+        raise ValueError(f"No rows passed the validation filter (GHI_true > {ghi_filter_wm2:.0f} W/m²).")
 
-    actual = df_day["GHI_true"].values
-    predicted = df_day["GHI_pred"].values
-    hours = df_day["hour"].values
-    times = df_day["datetime"].values
-    errors = predicted - actual
-    metrics_model = calculate_metrics(actual, predicted, mape_threshold=20.0)
+    actual = df_metrics["GHI_true"].values
+    predicted = df_metrics["GHI_pred"].values
+    metrics_model = calculate_metrics(actual, predicted, mape_threshold=ghi_filter_wm2)
+    first_week_start = df["datetime"].min()
+    first_week_df = _slice_window(df, first_week_start)
+    first_week_metrics_df = _slice_window(df_metrics, first_week_start)
+    first_week_metrics = None
+    if not first_week_metrics_df.empty:
+        first_week_metrics = calculate_metrics(
+            first_week_metrics_df["GHI_true"].values,
+            first_week_metrics_df["GHI_pred"].values,
+            mape_threshold=ghi_filter_wm2,
+        )
+
+    random_week_start = _choose_random_later_week_start(df_metrics, first_week_start)
+    random_week_df = _slice_window(df, random_week_start)
+    random_week_metrics_df = _slice_window(df_metrics, random_week_start)
+    random_week_metrics = None
+    if not random_week_metrics_df.empty:
+        random_week_metrics = calculate_metrics(
+            random_week_metrics_df["GHI_true"].values,
+            random_week_metrics_df["GHI_pred"].values,
+            mape_threshold=ghi_filter_wm2,
+        )
 
     with PdfPages(out_pdf) as pdf:
         _finetuned_cover_page(
             pdf,
             metrics_model=metrics_model,
-            station_id=df_day["station_id"].iloc[0] if "station_id" in df_day.columns else "unknown",
-            row_count=len(df_day),
+            station_id=df_metrics["station_id"].iloc[0] if "station_id" in df_metrics.columns else "unknown",
+            row_count=len(df_metrics),
             generated_at=datetime.now().strftime("%d %b %Y  %H:%M"),
+            ghi_filter_wm2=ghi_filter_wm2,
         )
-        _time_series_page(pdf, times, actual, predicted, "Fine-tuned Moirai — Actual vs Predicted GHI")
-        _four_panel_page(pdf, actual, predicted, errors, hours, "Fine-tuned Moirai — 4-Panel Evaluation")
+        _two_week_comparison_page(
+            pdf,
+            first_week_df["datetime"].values if not first_week_df.empty else df["datetime"].values,
+            first_week_df["GHI_true"].values if not first_week_df.empty else df["GHI_true"].values,
+            first_week_df["GHI_pred"].values if not first_week_df.empty else df["GHI_pred"].values,
+            "Fine-tuned Moirai — One-Week Actual vs Predicted GHI",
+            window_days=ONE_WEEK_DAYS,
+            metrics=first_week_metrics,
+            ghi_threshold=ghi_filter_wm2,
+        )
+        _two_week_comparison_page(
+            pdf,
+            random_week_df["datetime"].values if not random_week_df.empty else df["datetime"].values,
+            random_week_df["GHI_true"].values if not random_week_df.empty else df["GHI_true"].values,
+            random_week_df["GHI_pred"].values if not random_week_df.empty else df["GHI_pred"].values,
+            "Fine-tuned Moirai — Random Later One-Week Actual vs Predicted GHI",
+            window_days=ONE_WEEK_DAYS,
+            metrics=random_week_metrics,
+            ghi_threshold=ghi_filter_wm2,
+        )
+        _four_panel_page(
+            pdf,
+            df["GHI_true"].values,
+            df["GHI_pred"].values,
+            df["GHI_pred"].values - df["GHI_true"].values,
+            df["hour"].values,
+            "Fine-tuned Moirai — 4-Panel Evaluation",
+            n_points=len(df),
+        )
 
         meta = pdf.infodict()
         meta["Title"] = "Fine-tuned Moirai Validation Report"

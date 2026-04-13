@@ -97,7 +97,7 @@ We split the 3 years (Jan 2017 to Dec 2019) chronologically to ensure no data le
  ═══════════════════════════════════════════════════════════════════════
 
    ┌────────────────────────────────────────────────────────────────┐
-   │  Model: Salesforce/moirai-1.1-R-small                          │
+   │  Model: Salesforce/moirai-1.1-R-base                           │
    │  Method: LoRA (rank=16, alpha=32, target: q_proj, v_proj)     │
    │  1. 04_finetune.py: Trains on Train/Val splits                 │
    │  2. 05_finetuned_inference.py: Runs predictions on Test split  │
@@ -155,7 +155,7 @@ Standardizes all timestamps to IST Naive. Calculates CAF (`GHI / clear_sky_ghi`)
 Parses the multi-year history into Train (Jan '17 - Jun '19), Val (Jul '19 - Sep '19), and Test (Oct '19 - Dec '19). Combines into NumPy windows mapping a 72-hour `PAST` history targeting a 24-hour `FUTURE` prediction. Translates this structure natively into GluonTS-compatible streaming `Arrow` datasets for the official fine-tuning pipeline.
 
 ### Step 4: `04_finetune.py`
-Initalizes `moirai-1.1-R-small` and freezes the base weights. Appends trainable LoRA matrices (`r=16, alpha=32`) to the Attention `q_proj` and `v_proj` modules targeting roughly 400K parameters. Operates via PyTorch optimized with AdamW on `bf16-mixed` precision. Stops early if Val Loss degrades 5 epochs consecutively.
+Initalizes `moirai-1.1-R-base` and freezes the base weights. Appends trainable LoRA matrices (`r=16, alpha=32`) to the Attention `q_proj` and `v_proj` modules targeting roughly 400K parameters. Operates via PyTorch optimized with AdamW on `bf16-mixed` precision. Stops early if Val Loss degrades 5 epochs consecutively.
 
 ### Step 5: `05_finetuned_inference.py`
 Loads the frozen Moirai base model and merges the LoRA adapter computed in the previous step. Feeds the entire Test `.npy` split exactly and aggregates `CAF_pred`. Outputs `.csv` and `.json` prediction structures.

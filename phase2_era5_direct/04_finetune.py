@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import torch
 from pathlib import Path
+from huggingface_hub import hf_hub_download
+from hydra.utils import instantiate
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
@@ -45,7 +47,22 @@ def main():
     print(f"Loading {MODEL_ID}...")
     from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
 
-    module = MoiraiModule.from_pretrained(MODEL_ID)
+    try:
+        config_path = hf_hub_download(MODEL_ID, "config.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            model_kwargs = json.load(f)
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not load model config for {MODEL_ID}. "
+            "Make sure the checkpoint exists and is cached or reachable."
+        ) from e
+
+    if isinstance(model_kwargs.get("distr_output"), dict):
+        model_kwargs["distr_output"] = instantiate(model_kwargs["distr_output"], _convert_="all")
+    if isinstance(model_kwargs.get("patch_sizes"), list):
+        model_kwargs["patch_sizes"] = tuple(model_kwargs["patch_sizes"])
+
+    module = MoiraiModule.from_pretrained(MODEL_ID, **model_kwargs)
 
     # ---- 2. Inject LoRA adapters ----
     print(f"Injecting LoRA (rank={LORA_RANK}, alpha={LORA_ALPHA})...")

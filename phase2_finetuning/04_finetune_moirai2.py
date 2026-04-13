@@ -1,4 +1,4 @@
-"""LoRA fine-tuning of Moirai 1.1 on CAF data using uni2ts + peft."""
+"""LoRA fine-tuning of Moirai 2.0 on CAF data using uni2ts + peft."""
 import argparse
 import sys, json
 import numpy as np
@@ -6,20 +6,35 @@ import pandas as pd
 import torch
 from pathlib import Path
 from huggingface_hub import hf_hub_download
-from hydra.utils import instantiate
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import (
-    DATASET_DIR, ARROW_DIR, CHECKPOINT_DIR,
-    MODEL_ID, CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
+from config import (  # noqa: E402
+    DATASET_DIR, CHECKPOINT_DIR,
+    CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
     LORA_RANK, LORA_ALPHA, LORA_TARGET_MODULES, LORA_DROPOUT,
     FT_LR, FT_WEIGHT_DECAY, FT_MAX_EPOCHS, FT_PATIENCE,
     FT_BATCH_SIZE, FT_GRADIENT_CLIP,
 )
 
+MODEL_ID = "Salesforce/moirai-2.0-R-small"
+
+
+def _median_quantile_index(module) -> int:
+    quantiles = list(getattr(module, "quantile_levels", [0.5]))
+    return quantiles.index(0.5) if 0.5 in quantiles else len(quantiles) // 2
+
+
+def _extract_median_point_forecast(preds: torch.Tensor, median_idx: int) -> torch.Tensor:
+    """Return the median forecast as a [batch, horizon] tensor."""
+    if preds.ndim == 4:
+        return preds[:, median_idx, :, 0]
+    if preds.ndim == 3:
+        return preds[:, median_idx, :]
+    raise RuntimeError(f"Unexpected Moirai2 forecast shape: {tuple(preds.shape)}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune Moirai on CAF data.")
+    parser = argparse.ArgumentParser(description="Fine-tune Moirai 2.0 on CAF data.")
     parser.add_argument(
         "--smoke-test",
         action="store_true",
@@ -43,9 +58,9 @@ def main():
     if args.smoke_test:
         print("SMOKE TEST MODE: 1 epoch, limited train/val windows, no full-quality training.")
 
-    # ---- 1. Load pre-trained Moirai ----
+    # ---- 1. Load pre-trained Moirai 2.0 ----
     print(f"Loading {MODEL_ID}...")
-    from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
+    from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
 
     try:
         config_path = hf_hub_download(MODEL_ID, "config.json")
@@ -57,12 +72,10 @@ def main():
             "Make sure the checkpoint exists and is cached or reachable."
         ) from e
 
-    if isinstance(model_kwargs.get("distr_output"), dict):
-        model_kwargs["distr_output"] = instantiate(model_kwargs["distr_output"], _convert_="all")
-    if isinstance(model_kwargs.get("patch_sizes"), list):
-        model_kwargs["patch_sizes"] = tuple(model_kwargs["patch_sizes"])
+    if isinstance(model_kwargs.get("quantile_levels"), list):
+        model_kwargs["quantile_levels"] = tuple(model_kwargs["quantile_levels"])
 
-    module = MoiraiModule.from_pretrained(MODEL_ID, **model_kwargs)
+    module = Moirai2Module.from_pretrained(MODEL_ID, **model_kwargs)
 
     # ---- 2. Inject LoRA adapters ----
     print(f"Injecting LoRA (rank={LORA_RANK}, alpha={LORA_ALPHA})...")
@@ -79,34 +92,32 @@ def main():
     module.print_trainable_parameters()
 
     # ---- 3. Build forecast wrapper ----
-    model = MoiraiForecast(
+    model = Moirai2Forecast(
         module=module,
         prediction_length=PREDICTION_LENGTH,
         context_length=CONTEXT_LENGTH,
         target_dim=TARGET_DIM,
         feat_dynamic_real_dim=FEAT_DIM,
         past_feat_dynamic_real_dim=0,
-        patch_size=16,
     )
+
+    median_idx = _median_quantile_index(module)
 
     # ---- 4. Build dataloaders from .npy windows ----
     print("Building dataloaders from .npy windows...")
     from gluonts.dataset.common import ListDataset
-    from torch.utils.data import DataLoader
 
     def npy_to_gluonts(split):
         X_past = np.load(DATASET_DIR / f"X_past_{split}.npy")
         X_future = np.load(DATASET_DIR / f"X_future_{split}.npy")
-        y_future = np.load(DATASET_DIR / f"y_future_{split}.npy")
         times = np.load(DATASET_DIR / f"times_{split}.npy", allow_pickle=True)
 
         items = []
         for i in range(len(X_past)):
-            target = X_past[i, :, 0].astype(np.float32)  # CAF past
-            # Covariates: 10 features, past + future concatenated
-            past_feats = X_past[i, :, 1:].T   # [10, 72]
-            fut_feats = X_future[i].T          # [10, 24]
-            dyn_feats = np.hstack([past_feats, fut_feats]).astype(np.float32)  # [10, 96]
+            target = X_past[i, :, 0].astype(np.float32)
+            past_feats = X_past[i, :, 1:].T
+            fut_feats = X_future[i].T
+            dyn_feats = np.hstack([past_feats, fut_feats]).astype(np.float32)
 
             forecast_start = pd.Timestamp(times[i, 0])
             context_start = forecast_start - pd.Timedelta(hours=CONTEXT_LENGTH)
@@ -132,7 +143,7 @@ def main():
     print(f"  Val:   {len(val_items)} windows")
 
     # ---- 5. Training loop ----
-    print(f"\nStarting LoRA fine-tuning...")
+    print("\nStarting LoRA fine-tuning...")
     print(f"  LR={FT_LR}  Epochs={max_epochs}  Patience={patience}  Batch={batch_size}")
 
     if args.smoke_test:
@@ -176,7 +187,7 @@ def main():
     if max_val_windows is not None:
         y_val = y_val[:max_val_windows]
 
-    def forecast_mean(item):
+    def point_forecast(item):
         past_target = torch.tensor(
             item["target"], dtype=torch.float32, device=device
         ).view(1, CONTEXT_LENGTH, TARGET_DIM)
@@ -187,27 +198,23 @@ def main():
         ).unsqueeze(0)
         observed_feat = torch.ones_like(feat_dynamic, dtype=torch.bool)
 
-        distr = model._get_distr(
-            16,
+        preds = model(
             past_target,
             past_observed,
             past_is_pad,
-            feat_dynamic,
-            observed_feat,
+            feat_dynamic_real=feat_dynamic,
+            observed_feat_dynamic_real=observed_feat,
         )
-        formatted = model._format_preds(16, distr.mean.unsqueeze(0), TARGET_DIM)
-        return formatted[:, 0, :]
+        return _extract_median_point_forecast(preds, median_idx)
 
     for epoch in range(1, max_epochs + 1):
-        # --- Train ---
         module.train()
         train_losses = []
 
         for batch_idx, item in enumerate(train_ds):
             optimizer.zero_grad()
-
             try:
-                pred = forecast_mean(item).squeeze(0)
+                pred = point_forecast(item).squeeze(0)
                 y_true = torch.tensor(y_train[batch_idx], dtype=torch.float32, device=device)
 
                 if not torch.isfinite(pred).all():
@@ -238,13 +245,12 @@ def main():
 
         scheduler.step()
 
-        # --- Validate ---
         module.eval()
         val_losses = []
         with torch.no_grad():
             for val_idx, item in enumerate(val_ds):
                 try:
-                    pred = forecast_mean(item).squeeze(0).detach().cpu().numpy()
+                    pred = point_forecast(item).squeeze(0).detach().cpu().numpy()
                     y_true = y_val[val_idx]
                     val_loss = np.mean((pred[:len(y_true)] - y_true) ** 2)
                     if np.isfinite(val_loss):
@@ -260,7 +266,6 @@ def main():
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Epoch {epoch:3d} | train_mse={avg_train:.5f}  val_mse={avg_val:.5f}  lr={scheduler.get_last_lr()[0]:.2e}")
 
-        # Early stopping
         if avg_val < best_val_loss:
             best_val_loss = avg_val
             patience_counter = 0
@@ -275,12 +280,11 @@ def main():
     if best_state:
         module.load_state_dict(best_state)
 
-    adapter_name = "moirai_lora_adapter_smoke" if args.smoke_test else "moirai_lora_adapter"
+    adapter_name = "moirai2_lora_adapter_smoke" if args.smoke_test else "moirai2_lora_adapter"
     adapter_path = CHECKPOINT_DIR / adapter_name
     module.save_pretrained(str(adapter_path))
     print(f"\n  LoRA adapter saved → {adapter_path}")
 
-    # Save config
     lora_info = {
         "base_model": MODEL_ID,
         "lora_rank": LORA_RANK,
@@ -289,8 +293,9 @@ def main():
         "best_val_mse": float(best_val_loss),
         "best_val_rmse": float(best_val_loss ** 0.5),
         "smoke_test": args.smoke_test,
+        "model_family": "moirai2",
     }
-    config_name = "lora_config_smoke.json" if args.smoke_test else "lora_config.json"
+    config_name = "lora_config_moirai2_smoke.json" if args.smoke_test else "lora_config_moirai2.json"
     with open(CHECKPOINT_DIR / config_name, "w") as f:
         json.dump(lora_info, f, indent=2)
     print(f"  Config saved → {config_name}")

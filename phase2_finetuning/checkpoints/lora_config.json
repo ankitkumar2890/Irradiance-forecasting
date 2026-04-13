@@ -6,7 +6,7 @@
     "q_proj",
     "v_proj"
   ],
-  "best_val_mse": 0.014859777875244617,
-  "best_val_rmse": 0.1219006885757608,
+  "best_val_mse": 0.015332754701375961,
+  "best_val_rmse": 0.12382550101403168,
   "smoke_test": false
 }

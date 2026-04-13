@@ -84,7 +84,7 @@ FUTURE_FEATURES = [
 ]
 
 # ---- Model ----
-MODEL_ID           = "Salesforce/moirai-1.1-R-small"
+MODEL_ID           = "Salesforce/moirai-1.1-R-base"
 CONTEXT_LENGTH     = PAST_HOURS
 PREDICTION_LENGTH  = FUTURE_HOURS
 TARGET_DIM         = 1

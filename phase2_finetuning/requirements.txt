@@ -1,8 +1,11 @@
 uni2ts
+jax[cpu]
 torch>=2.1
 gluonts>=0.14
 lightning>=2.1
 peft>=0.7
+antlr4-python3-runtime==4.9.3
+jaxtyping==0.2.24
 datasets
 einops>=0.7
 huggingface_hub>=0.20

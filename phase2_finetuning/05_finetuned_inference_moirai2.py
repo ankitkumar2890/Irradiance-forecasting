@@ -1,23 +1,38 @@
-"""Run fine-tuned Moirai (base + LoRA adapter) on the validation split."""
+"""Run fine-tuned Moirai 2.0 (base + LoRA adapter) on the validation split."""
 import sys, json
 import torch
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from huggingface_hub import hf_hub_download
-from hydra.utils import instantiate
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import (
+from config import (  # noqa: E402
     DATASET_DIR, CHECKPOINT_DIR, RESULTS_DIR,
-    MODEL_ID, CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
+    CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
 )
+
+MODEL_ID = "Salesforce/moirai-2.0-R-small"
+
+
+def _median_quantile_index(module) -> int:
+    quantiles = list(getattr(module, "quantile_levels", [0.5]))
+    return quantiles.index(0.5) if 0.5 in quantiles else len(quantiles) // 2
+
+
+def _extract_median_point_forecast(preds: torch.Tensor, median_idx: int) -> torch.Tensor:
+    """Return the median forecast as a [batch, horizon] tensor."""
+    if preds.ndim == 4:
+        return preds[:, median_idx, :, 0]
+    if preds.ndim == 3:
+        return preds[:, median_idx, :]
+    raise RuntimeError(f"Unexpected Moirai2 forecast shape: {tuple(preds.shape)}")
 
 
 def main():
     # ---- Load base model + LoRA adapter ----
     print(f"Loading {MODEL_ID} + LoRA adapter...")
-    from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
+    from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
     from peft import PeftModel
 
     try:
@@ -30,17 +45,15 @@ def main():
             "Make sure the checkpoint exists and is cached or reachable."
         ) from e
 
-    if isinstance(model_kwargs.get("distr_output"), dict):
-        model_kwargs["distr_output"] = instantiate(model_kwargs["distr_output"], _convert_="all")
-    if isinstance(model_kwargs.get("patch_sizes"), list):
-        model_kwargs["patch_sizes"] = tuple(model_kwargs["patch_sizes"])
+    if isinstance(model_kwargs.get("quantile_levels"), list):
+        model_kwargs["quantile_levels"] = tuple(model_kwargs["quantile_levels"])
 
-    base_module = MoiraiModule.from_pretrained(MODEL_ID, **model_kwargs)
-    adapter_path = CHECKPOINT_DIR / "moirai_lora_adapter"
+    base_module = Moirai2Module.from_pretrained(MODEL_ID, **model_kwargs)
+    adapter_path = CHECKPOINT_DIR / "moirai2_lora_adapter"
     module = PeftModel.from_pretrained(base_module, str(adapter_path))
     module.eval()
 
-    model = MoiraiForecast(
+    model = Moirai2Forecast(
         module=module,
         prediction_length=PREDICTION_LENGTH,
         context_length=CONTEXT_LENGTH,
@@ -48,9 +61,9 @@ def main():
         feat_dynamic_real_dim=FEAT_DIM,
         past_feat_dynamic_real_dim=0,
     )
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    median_idx = _median_quantile_index(module)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     module.to(device)
 
     # ---- Load validation data ----
@@ -75,16 +88,14 @@ def main():
         ).unsqueeze(0)
         observed_feat = torch.ones_like(feat_dynamic, dtype=torch.bool)
 
-        distr = model._get_distr(
-            16,
+        preds = model(
             past_target,
             past_observed,
             past_is_pad,
-            feat_dynamic,
-            observed_feat,
+            feat_dynamic_real=feat_dynamic,
+            observed_feat_dynamic_real=observed_feat,
         )
-        formatted = model._format_preds(16, distr.mean.unsqueeze(0), TARGET_DIM)
-        return formatted[:, 0, :].squeeze(0).detach().cpu().numpy()
+        return _extract_median_point_forecast(preds, median_idx).squeeze(0).detach().cpu().numpy()
 
     for i in range(len(X_past)):
         target = X_past[i, :, 0].astype(np.float32)
@@ -93,7 +104,6 @@ def main():
         dyn_feats = np.hstack([past_feats, fut_feats]).astype(np.float32)
 
         forecast_start = pd.Timestamp(times[i, 0])
-        context_start = forecast_start - pd.Timedelta(hours=CONTEXT_LENGTH)
 
         pred = forecast_mean(target, dyn_feats)[:PREDICTION_LENGTH]
 
@@ -116,6 +126,7 @@ def main():
     # ---- Save ----
     df_out = pd.DataFrame(csv_rows).sort_values("datetime").reset_index(drop=True)
     df_out.to_csv(RESULTS_DIR / "finetuned_predictions.csv", index=False)
+    df_out.to_csv(RESULTS_DIR / "finetuned_predictions_moirai2.csv", index=False)
 
     all_preds = np.concatenate(all_preds)
     all_true = np.concatenate(all_true)
@@ -127,8 +138,11 @@ def main():
     metrics = {"CAF_RMSE": float(rmse), "CAF_MAE": float(mae)}
     with open(RESULTS_DIR / "finetuned_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+    with open(RESULTS_DIR / "finetuned_metrics_moirai2.json", "w") as f:
+        json.dump(metrics, f, indent=2)
 
     print(f"  Saved → results/finetuned_predictions.csv + finetuned_metrics.json")
+    print(f"  Saved → results/finetuned_predictions_moirai2.csv + finetuned_metrics_moirai2.json")
 
 
 if __name__ == "__main__":

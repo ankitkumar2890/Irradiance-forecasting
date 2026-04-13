@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import DATASET_DIR, DOWNLOADS_DIR, RESULTS_DIR, PREDICTION_LENGTH, YEARS, FINETUNE_STATION
 from master_metrics import calculate_metrics, print_metrics
-from master_plots import plot_4panel_evaluation, plot_time_series
+from master_plots import plot_4panel_evaluation, plot_time_series, plot_two_week_comparison
 from export_pdf import build_finetuned_pdf
 
 
@@ -22,7 +22,16 @@ def normalize_ghi_to_hour_grid(df):
     df = df.copy()
     minutes = sorted(df["datetime"].dt.minute.dropna().unique().tolist())
     if minutes == [30]:
-        df["datetime"] = df["datetime"] - pd.Timedelta(minutes=30)
+        prev_hour = df.copy()
+        prev_hour["datetime"] = prev_hour["datetime"] - pd.Timedelta(minutes=30)
+        next_hour = df.copy()
+        next_hour["datetime"] = next_hour["datetime"] + pd.Timedelta(minutes=30)
+        df = (
+            pd.concat([prev_hour, next_hour], ignore_index=True)
+            .groupby("datetime", as_index=False)["w_ghr"]
+            .mean()
+            .sort_values("datetime")
+        )
     return df
 
 
@@ -89,6 +98,12 @@ def main():
     if validation_df.empty:
         print("No validation rows passed the post-reconstruction GHI filter.")
         return
+    two_week_start = validation_df["datetime"].min()
+    two_week_end = two_week_start + pd.Timedelta(days=14)
+    two_week_df = validation_df[
+        (validation_df["datetime"] >= two_week_start) &
+        (validation_df["datetime"] < two_week_end)
+    ].copy()
 
     # ---- Persistence baseline on hourly timeline ----
     proc_full = (
@@ -116,9 +131,11 @@ def main():
     # ---- CAF Metrics (daytime) ----
     caf_m = compute_metrics(validation_df["CAF_true"].values, validation_df["CAF_pred"].values, "CAF_finetuned")
     caf_m["Skill_vs_persist"] = 1.0 - caf_m["RMSE"] / persist_rmse if persist_rmse > 0 else float("nan")
+    two_week_caf_m = compute_metrics(two_week_df["CAF_true"].values, two_week_df["CAF_pred"].values, "CAF_2week")
 
     # ---- GHI Metrics (daytime) ----
     ghi_m = compute_metrics(validation_df["GHI_true"].values, validation_df["GHI_pred"].values, "GHI_finetuned")
+    two_week_ghi_m = compute_metrics(two_week_df["GHI_true"].values, two_week_df["GHI_pred"].values, "GHI_2week")
     master_ghi_m = calculate_metrics(
         validation_df["GHI_true"].to_numpy(),
         validation_df["GHI_pred"].to_numpy(),
@@ -140,6 +157,8 @@ def main():
         master_ghi_m,
         title="MASTER GHI METRICS vs w_ghr (FILTER: measured GHI_true > 20)",
     )
+    print("\n  Two-Week Window Metrics:")
+    print_metrics(two_week_ghi_m, title="TWO-WEEK GHI METRICS", unit="W/m²")
 
     # ---- Stratified ----
     print("\n  Stratified CAF RMSE:")
@@ -167,7 +186,9 @@ def main():
     all_metrics = {
         "filters": {"ghi_true_gt_wm2": VALIDATION_GHI_FILTER_WM2},
         "caf": caf_m,
+        "caf_two_week": two_week_caf_m,
         "ghi": ghi_m,
+        "ghi_two_week": two_week_ghi_m,
         "ghi_master_metrics": {k: float(v) for k, v in master_ghi_m.items()},
         "persistence_rmse": float(persist_rmse),
         "horizon_rmse": horizon_rmse,
@@ -187,11 +208,25 @@ def main():
         f"  MAPE_pct: {caf_m['MAPE_pct']:.4f}",
         f"  Skill_vs_persist: {caf_m['Skill_vs_persist']:.4f}",
         "",
+        "Two-Week CAF Metrics:",
+        f"  N: {two_week_caf_m['N']}",
+        f"  RMSE: {two_week_caf_m['RMSE']:.4f}",
+        f"  MAE: {two_week_caf_m['MAE']:.4f}",
+        f"  nRMSE_pct: {two_week_caf_m['nRMSE_pct']:.4f}",
+        f"  MAPE_pct: {two_week_caf_m['MAPE_pct']:.4f}",
+        "",
         "GHI Master Metrics vs measured w_ghr:",
         f"  RMSE: {master_ghi_m['RMSE']:.4f}",
         f"  nRMSE: {master_ghi_m['nRMSE']:.4f}",
         f"  MAE: {master_ghi_m['MAE']:.4f}",
         f"  MAPE: {master_ghi_m['MAPE']:.4f}",
+        "",
+        "Two-Week GHI Metrics:",
+        f"  N: {two_week_ghi_m['N']}",
+        f"  RMSE: {two_week_ghi_m['RMSE']:.4f}",
+        f"  nRMSE_pct: {two_week_ghi_m['nRMSE_pct']:.4f}",
+        f"  MAE: {two_week_ghi_m['MAE']:.4f}",
+        f"  MAPE_pct: {two_week_ghi_m['MAPE_pct']:.4f}",
     ]
     if horizon_rmse:
         report_lines.extend([
@@ -214,6 +249,17 @@ def main():
         week["GHI_pred"].to_numpy(),
         title="ERA5-Direct Moirai — Measured vs Predicted GHI (Filtered Validation Window)",
         save_path=str(RESULTS_DIR / "finetuned_timeseries.png"),
+        n_points=len(validation_df),
+    )
+    plot_two_week_comparison(
+        two_week_df["datetime"].to_numpy(),
+        two_week_df["GHI_true"].to_numpy(),
+        two_week_df["GHI_pred"].to_numpy(),
+        start=two_week_start,
+        window_days=14,
+        title="ERA5-Direct Moirai — Two-Week Measured vs Predicted GHI",
+        save_path=str(RESULTS_DIR / "finetuned_two_week_comparison.png"),
+        n_points=len(two_week_df),
     )
     plot_4panel_evaluation(
         validation_df["GHI_true"].to_numpy(),
@@ -221,6 +267,7 @@ def main():
         hour_array=validation_df["hour"].to_numpy(),
         title="ERA5-Direct Moirai — Validation GHI Evaluation",
         save_path=str(RESULTS_DIR / "finetuned_4panel.png"),
+        n_points=len(validation_df),
     )
 
     validation_report = validation_df[[
