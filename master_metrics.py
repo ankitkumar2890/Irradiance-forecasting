@@ -35,18 +35,24 @@ def calculate_metrics(actual, predicted, mape_threshold=5.0):
         'RMSE': rmse,
         'nRMSE': nrmse,
         'MAE': mae,
-        'MAPE': mape
+        'MAPE': mape,
+        'N': int(len(actual)),
     }
 
 def print_metrics(metrics_dict, title="EVALUATION METRICS", unit="W/m²"):
     """
     Utility to beautifully print the calculated metrics dictionary.
     """
+    nrmse = metrics_dict.get("nRMSE", metrics_dict.get("nRMSE_pct", 0))
+    mae = metrics_dict.get("MAE", 0)
+    mape = metrics_dict.get("MAPE", metrics_dict.get("MAPE_pct", 0))
     print(f"\n--- {title} ---")
     print(f"RMSE  : {metrics_dict['RMSE']:.2f} {unit}")
-    print(f"nRMSE : {metrics_dict['nRMSE']:.2f} %")
-    print(f"MAE   : {metrics_dict['MAE']:.2f} {unit}")
-    print(f"MAPE  : {metrics_dict['MAPE']:.2f} %")
+    print(f"nRMSE : {nrmse:.2f} %")
+    print(f"MAE   : {mae:.2f} {unit}")
+    print(f"MAPE  : {mape:.2f} %")
+    if "N" in metrics_dict:
+        print(f"N     : {metrics_dict['N']}")
 
 # Simple test block (only runs if executed directly)
 if __name__ == "__main__":
