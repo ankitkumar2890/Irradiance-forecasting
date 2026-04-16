@@ -1,0 +1,164 @@
+{
+  "year": 2017,
+  "month": "JAN",
+  "dataset_root": "data_2017/3RIMG_L2C_INS",
+  "year_root": "data_2017/3RIMG_L2C_INS/2017",
+  "files_processed": 1450,
+  "files_found": 1450,
+  "failed_files": [],
+  "target_lat": 9.14,
+  "target_lon": 77.92,
+  "grid_lat": 1229.0670156003907,
+  "grid_lon": 0.0,
+  "row_index": 1350,
+  "col_index": 868,
+  "datasets": {
+    "INS": {
+      "shape": [
+        1,
+        1616,
+        1737
+      ],
+      "dtype": "float32",
+      "attrs": {
+        "DIMENSION_LIST": [
+          [
+            "<HDF5 object reference>"
+          ],
+          [
+            "<HDF5 object reference>"
+          ],
+          [
+            "<HDF5 object reference>"
+          ]
+        ],
+        "_FillValue": [
+          -999.0
+        ],
+        "grid_mapping": "Projection_Information",
+        "long_name": "Surface Insolation",
+        "standard_name": "solar_insolation",
+        "units": "W.m-2"
+      }
+    },
+    "Projection_Information": {
+      "shape": [
+        1
+      ],
+      "dtype": "int32",
+      "attrs": {
+        "DIMENSION_LIST": [
+          [
+            "<HDF5 object reference>"
+          ]
+        ],
+        "false_easting": [
+          0.0
+        ],
+        "false_northing": [
+          0.0
+        ],
+        "grid_mapping_name": "mercator",
+        "longitude_of_projection_origin": [
+          77.25
+        ],
+        "lower_left_lat_lon(degrees)": [
+          -10.0,
+          44.5
+        ],
+        "lower_right_lat_lon(degrees)": [
+          -10.0,
+          110.0
+        ],
+        "semi_major_axis": [
+          6378137.0
+        ],
+        "semi_minor_axis": [
+          6356752.3142
+        ],
+        "standard_parallel": [
+          17.75
+        ],
+        "upper_left_lat_lon(degrees)": [
+          45.5,
+          44.5
+        ],
+        "upper_left_xy(meters)": [
+          -3473242.733735,
+          5401854.420193
+        ],
+        "upper_right_lat_lon(degrees)": [
+          45.5,
+          110.0
+        ]
+      }
+    },
+    "X": {
+      "shape": [
+        1737
+      ],
+      "dtype": "float64",
+      "attrs": {
+        "CLASS": "DIMENSION_SCALE",
+        "REFERENCE_LIST": [
+          [
+            "<HDF5 object reference>",
+            2
+          ]
+        ],
+        "long_name": "x coordinate of projection",
+        "standard_name": "projection_x_coordinate",
+        "units": "m"
+      }
+    },
+    "Y": {
+      "shape": [
+        1616
+      ],
+      "dtype": "float64",
+      "attrs": {
+        "CLASS": "DIMENSION_SCALE",
+        "REFERENCE_LIST": [
+          [
+            "<HDF5 object reference>",
+            1
+          ]
+        ],
+        "long_name": "y coordinate of projection",
+        "standard_name": "projection_y_coordinate",
+        "units": "m"
+      }
+    },
+    "proj_dim": {
+      "shape": [
+        1
+      ],
+      "dtype": "int32",
+      "attrs": {
+        "CLASS": "DIMENSION_SCALE",
+        "REFERENCE_LIST": [
+          [
+            "<HDF5 object reference>",
+            0
+          ]
+        ]
+      }
+    },
+    "time": {
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "attrs": {
+        "CLASS": "DIMENSION_SCALE",
+        "REFERENCE_LIST": [
+          [
+            "<HDF5 object reference>",
+            0
+          ]
+        ],
+        "units": "minutes since 2000-01-01 00:00:00"
+      }
+    }
+  }
+}

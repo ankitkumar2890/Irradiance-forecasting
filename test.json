@@ -1,0 +1,20 @@
+{
+    "user_credentials": {
+        "username/email": "irfan",
+        "password": "Data_pass7"
+    },
+    "search_parameters": {
+        "datasetId": "3RIMG_L2C_INS",
+        "startTime": "2017-12-01",
+        "endTime": "2017-12-01"
+    },
+    "download_settings": {
+        "download_path": "data_2017",
+        "organize_by_date": true,
+        "skip_user_input": true,
+        "generate_error_logs": true,
+        "error_logs_dir": "/Users/IRFAN/Library/CloudStorage/GoogleDrive-irfan.a@atriauniversity.edu.in/My Drive/Irradiance-forecasting/insat_raw/L2C_CMP/logs",
+        "failed_downloads_file": "failed_downloads.txt",
+        "retry_wait_seconds": 30
+    }
+}

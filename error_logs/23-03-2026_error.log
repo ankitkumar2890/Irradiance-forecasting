@@ -1,0 +1,58 @@
+23-03-2026 16:48:48 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Data unavailable for given parameters
+Error Details: {'timestamp': '23-03-2026 04:48:48', 'statusCode': 500, 'message': ['Data unavailable for given parameters']}
+
+23-03-2026 16:55:17 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Bad Input Value; 2018-01-31T23:59:59Z
+Error Details: {'timestamp': '23-03-2026 04:55:17', 'statusCode': 400, 'message': ['Bad Input Value; 2018-01-31T23:59:59Z', 'Bad Input Value; 2018-01-01T00:00:00Z']}
+
+23-03-2026 16:56:30 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Bad Input Value; 31-01-2018
+Error Details: {'timestamp': '23-03-2026 04:56:30', 'statusCode': 400, 'message': ['Bad Input Value; 31-01-2018', 'Bad Input Value; 01-01-2018']}
+
+23-03-2026 16:57:04 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Data unavailable for given parameters
+Error Details: {'timestamp': '23-03-2026 04:57:04', 'statusCode': 500, 'message': ['Data unavailable for given parameters']}
+
+23-03-2026 16:58:07 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Bad Input Value; 31-01-2018
+Error Details: {'timestamp': '23-03-2026 04:58:07', 'statusCode': 400, 'message': ['Bad Input Value; 31-01-2018', 'Bad Input Value; 01-01-2018']}
+
+23-03-2026 16:58:23 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Data unavailable for given parameters
+Error Details: {'timestamp': '23-03-2026 04:58:23', 'statusCode': 500, 'message': ['Data unavailable for given parameters']}
+
+23-03-2026 16:59:05 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Data unavailable for given parameters
+Error Details: {'timestamp': '23-03-2026 04:59:05', 'statusCode': 500, 'message': ['Data unavailable for given parameters']}
+
+23-03-2026 17:02:41 - ERROR - 
+
+Error Fetching Data from Search Endpoint.
+
+Error Message: Data unavailable for given parameters
+Error Details: {'timestamp': '23-03-2026 05:02:41', 'statusCode': 500, 'message': ['Data unavailable for given parameters']}
+
+23-03-2026 17:07:50 - ERROR - Invalid Username/Password. After 3 Incorrect Attempts, your Account will be Locked for 1 Hour.
+

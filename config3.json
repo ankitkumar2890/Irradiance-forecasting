@@ -1,0 +1,19 @@
+{
+    "user_credentials": {
+        "username/email": "irfan01",
+        "password": "Data_pass7"
+    },
+    "search_parameters": {
+        "datasetId": "3RIMG_L2C_CMP",
+        "startTime": "2023-04-01",
+        "endTime": "2023-04-30",
+        "boundingBox": "72.5,8.0,81.5,17.0"
+    },
+    "download_settings": {
+        "download_path": "/Users/IRFAN/Library/CloudStorage/GoogleDrive-irfan.a@atriauniversity.edu.in/My Drive/Irradiance-forecasting/insat_raw/L2C_CMP/apr2023",
+        "organize_by_date": true,
+        "skip_user_input": true,
+        "generate_error_logs": true,
+        "error_logs_dir": "/Users/IRFAN/Library/CloudStorage/GoogleDrive-irfan.a@atriauniversity.edu.in/My Drive/Irradiance-forecasting/insat_raw/L2C_CMP/logs"
+    }
+}
