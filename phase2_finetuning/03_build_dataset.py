@@ -11,6 +11,7 @@ Two output formats:
   Format B: GluonTS Arrow datasets (for uni2ts fine-tuning CLI)
 """
 import sys
+import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -20,35 +21,65 @@ from config import (
     DATASET_DIR, ARROW_DIR,
     TRAIN_END, VAL_START, VAL_END, TEST_START,
     PAST_HOURS, FUTURE_HOURS, PAST_FEATURES, FUTURE_FEATURES,
-    FINETUNE_STATION,
 )
+
+DEFAULT_SINGLE_STATION_ID = "site_1"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--processed-file",
+        type=Path,
+        default=DATASET_DIR / "processed_data_2017_2019.csv",
+        help="Processed feature CSV to convert into train/val/test windows.",
+    )
+    parser.add_argument(
+        "--default-station-id",
+        type=str,
+        default=DEFAULT_SINGLE_STATION_ID,
+        help="Station id to inject when the processed CSV has no station_id column.",
+    )
+    return parser.parse_args()
+
+
+def ensure_station_id(df, default_station_id):
+    df = df.copy()
+    if "station_id" not in df.columns:
+        df["station_id"] = default_station_id
+        print(f"  station_id missing → using '{default_station_id}' for all rows")
+    return df
 
 
 def build_windows(df, split_name):
-    """Build sliding windows anchored at 06:00 IST."""
-    X_past, X_future, y_future, times = [], [], [], []
+    """Build sliding windows anchored at 06:00 IST, per station."""
+    X_past, X_future, y_future, times, station_ids = [], [], [], [], []
 
-    for i in range(len(df) - PAST_HOURS - FUTURE_HOURS + 1):
-        past = df.iloc[i : i + PAST_HOURS]
-        future = df.iloc[i + PAST_HOURS : i + PAST_HOURS + FUTURE_HOURS]
+    for station_id, station_df in df.groupby("station_id", sort=True):
+        station_df = station_df.sort_values("datetime").reset_index(drop=True)
+        for i in range(len(station_df) - PAST_HOURS - FUTURE_HOURS + 1):
+            past = station_df.iloc[i : i + PAST_HOURS]
+            future = station_df.iloc[i + PAST_HOURS : i + PAST_HOURS + FUTURE_HOURS]
 
-        if future.iloc[0]["datetime"].hour != 6:
-            continue
-        if past["datetime"].dt.date.nunique() < 3:
-            continue
+            if future.iloc[0]["datetime"].hour != 6:
+                continue
+            if past["datetime"].dt.date.nunique() < 3:
+                continue
 
-        X_past.append(past[PAST_FEATURES].values)
-        X_future.append(future[FUTURE_FEATURES].values)
-        y_future.append(future["CAF"].values)
-        times.append(future["datetime"].values)
+            X_past.append(past[PAST_FEATURES].values)
+            X_future.append(future[FUTURE_FEATURES].values)
+            y_future.append(future["CAF"].values)
+            times.append(future["datetime"].values)
+            station_ids.append(station_id)
 
     X_past = np.array(X_past, dtype=np.float32)
     X_future = np.array(X_future, dtype=np.float32)
     y_future = np.array(y_future, dtype=np.float32)
     times = np.array(times, dtype="datetime64[ns]")
+    station_ids = np.array(station_ids, dtype=str)
 
     for name, arr in [("X_past", X_past), ("X_future", X_future),
-                       ("y_future", y_future), ("times", times)]:
+                       ("y_future", y_future), ("times", times), ("station_ids", station_ids)]:
         np.save(DATASET_DIR / f"{name}_{split_name}.npy", arr)
 
     print(f"  {split_name}: {len(X_past)} windows  "
@@ -60,17 +91,27 @@ def build_arrow(df, split_name):
     """Build GluonTS-compatible Arrow dataset for uni2ts fine-tuning."""
     from datasets import Dataset, Features, Sequence, Value
 
-    target = df["CAF"].values.astype(np.float32)
-    covariates = df[FUTURE_FEATURES].values.astype(np.float32).T.tolist()
-    start_str = str(pd.Period(df["datetime"].iloc[0], freq="h"))
-
-    sample = {
-        "start": [start_str],
-        "target": [target.tolist()],
-        "feat_dynamic_real": [covariates],
-        "freq": ["h"],
-        "item_id": [f"{FINETUNE_STATION}_{split_name}"],
+    samples = {
+        "start": [],
+        "target": [],
+        "feat_dynamic_real": [],
+        "freq": [],
+        "item_id": [],
     }
+
+    for station_id, station_df in df.groupby("station_id", sort=True):
+        station_df = station_df.sort_values("datetime").reset_index(drop=True)
+        if station_df.empty:
+            continue
+        target = station_df["CAF"].values.astype(np.float32)
+        covariates = station_df[FUTURE_FEATURES].values.astype(np.float32).T.tolist()
+        start_str = str(pd.Period(station_df["datetime"].iloc[0], freq="h"))
+
+        samples["start"].append(start_str)
+        samples["target"].append(target.tolist())
+        samples["feat_dynamic_real"].append(covariates)
+        samples["freq"].append("h")
+        samples["item_id"].append(f"{station_id}_{split_name}")
 
     features = Features({
         "start": Value("string"),
@@ -80,19 +121,22 @@ def build_arrow(df, split_name):
         "item_id": Value("string"),
     })
 
-    ds = Dataset.from_dict(sample, features=features)
+    ds = Dataset.from_dict(samples, features=features)
     out_path = ARROW_DIR / split_name
     ds.save_to_disk(str(out_path))
-    print(f"  Arrow {split_name}: {len(target)} timesteps → {out_path}")
+    print(f"  Arrow {split_name}: {len(samples['item_id'])} series → {out_path}")
 
 
 def main():
-    processed_file = DATASET_DIR / "processed_data_2017_2019.csv"
+    args = parse_args()
+    processed_file = Path(args.processed_file)
     df = pd.read_csv(processed_file)
     df["datetime"] = pd.to_datetime(df["datetime"])
+    df = ensure_station_id(df, args.default_station_id)
 
     print(f"Loaded {processed_file.name}: {len(df)} rows")
-    print(f"  Range: {df['datetime'].iloc[0]} → {df['datetime'].iloc[-1]}")
+    print(f"  Stations: {df['station_id'].nunique()}  {sorted(df['station_id'].unique().tolist())}")
+    print(f"  Range: {df['datetime'].min()} → {df['datetime'].max()}")
 
     # Temporal split
     train_df = df[df["datetime"] <= TRAIN_END].reset_index(drop=True)
@@ -102,12 +146,12 @@ def main():
 
     print(f"\nSplit sizes:")
     print(f"  Train: {len(train_df)} rows  "
-          f"({train_df['datetime'].iloc[0]} → {train_df['datetime'].iloc[-1]})")
+          f"({train_df['datetime'].min()} → {train_df['datetime'].max()})")
     print(f"  Val:   {len(val_df)} rows  "
-          f"({val_df['datetime'].iloc[0]} → {val_df['datetime'].iloc[-1]})")
+          f"({val_df['datetime'].min()} → {val_df['datetime'].max()})")
     if len(test_df) > 0:
         print(f"  Test:  {len(test_df)} rows  "
-              f"({test_df['datetime'].iloc[0]} → {test_df['datetime'].iloc[-1]})")
+              f"({test_df['datetime'].min()} → {test_df['datetime'].max()})")
     else:
         print("  Test:  0 rows  (no held-out test range configured)")
 

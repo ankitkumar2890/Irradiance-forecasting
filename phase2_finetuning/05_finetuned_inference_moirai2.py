@@ -15,17 +15,45 @@ from config import (  # noqa: E402
 MODEL_ID = "Salesforce/moirai-2.0-R-small"
 
 
-def _median_quantile_index(module) -> int:
-    quantiles = list(getattr(module, "quantile_levels", [0.5]))
-    return quantiles.index(0.5) if 0.5 in quantiles else len(quantiles) // 2
+def _get_quantile_levels(module) -> list[float]:
+    """Find quantile levels even when the model is wrapped by PEFT/container modules."""
+    to_visit = [module]
+    seen = set()
+
+    while to_visit:
+        current = to_visit.pop(0)
+        if current is None:
+            continue
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+
+        quantiles = getattr(current, "quantile_levels", None)
+        if quantiles is not None:
+            return [float(q) for q in quantiles]
+
+        for attr in ("model", "module", "base_model"):
+            nested = getattr(current, attr, None)
+            if nested is not None:
+                to_visit.append(nested)
+
+    return [0.5]
 
 
-def _extract_median_point_forecast(preds: torch.Tensor, median_idx: int) -> torch.Tensor:
-    """Return the median forecast as a [batch, horizon] tensor."""
+def _quantile_index(module, target_quantile: float) -> int:
+    quantiles = _get_quantile_levels(module)
+    if target_quantile in quantiles:
+        return quantiles.index(target_quantile)
+    return min(range(len(quantiles)), key=lambda idx: abs(float(quantiles[idx]) - target_quantile))
+
+
+def _extract_quantile_forecast(preds: torch.Tensor, quantile_idx: int) -> torch.Tensor:
+    """Return one forecast quantile as a [batch, horizon] tensor."""
     if preds.ndim == 4:
-        return preds[:, median_idx, :, 0]
+        return preds[:, quantile_idx, :, 0]
     if preds.ndim == 3:
-        return preds[:, median_idx, :]
+        return preds[:, quantile_idx, :]
     raise RuntimeError(f"Unexpected Moirai2 forecast shape: {tuple(preds.shape)}")
 
 
@@ -61,7 +89,9 @@ def main():
         feat_dynamic_real_dim=FEAT_DIM,
         past_feat_dynamic_real_dim=0,
     )
-    median_idx = _median_quantile_index(module)
+    p10_idx = _quantile_index(module, 0.1)
+    median_idx = _quantile_index(module, 0.5)
+    p90_idx = _quantile_index(module, 0.9)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     module.to(device)
@@ -71,13 +101,15 @@ def main():
     X_future = np.load(DATASET_DIR / "X_future_val.npy")
     y_future = np.load(DATASET_DIR / "y_future_val.npy")
     times = np.load(DATASET_DIR / "times_val.npy", allow_pickle=True).astype("datetime64[ns]")
+    station_ids = np.load(DATASET_DIR / "station_ids_val.npy", allow_pickle=True)
 
     print(f"Validation windows: {len(X_past)}")
+    print(f"Stations: {sorted(set(station_ids.tolist()))}")
 
     # ---- Predict ----
     all_preds, all_true, csv_rows = [], [], []
 
-    def forecast_mean(target, feat_dynamic_real):
+    def forecast_quantiles(target, feat_dynamic_real):
         past_target = torch.tensor(
             target, dtype=torch.float32, device=device
         ).view(1, CONTEXT_LENGTH, TARGET_DIM)
@@ -95,7 +127,11 @@ def main():
             feat_dynamic_real=feat_dynamic,
             observed_feat_dynamic_real=observed_feat,
         )
-        return _extract_median_point_forecast(preds, median_idx).squeeze(0).detach().cpu().numpy()
+        return {
+            "p10": _extract_quantile_forecast(preds, p10_idx).squeeze(0).detach().cpu().numpy(),
+            "p50": _extract_quantile_forecast(preds, median_idx).squeeze(0).detach().cpu().numpy(),
+            "p90": _extract_quantile_forecast(preds, p90_idx).squeeze(0).detach().cpu().numpy(),
+        }
 
     for i in range(len(X_past)):
         target = X_past[i, :, 0].astype(np.float32)
@@ -105,7 +141,10 @@ def main():
 
         forecast_start = pd.Timestamp(times[i, 0])
 
-        pred = forecast_mean(target, dyn_feats)[:PREDICTION_LENGTH]
+        pred_quantiles = forecast_quantiles(target, dyn_feats)
+        pred = pred_quantiles["p50"][:PREDICTION_LENGTH]
+        pred_p10 = pred_quantiles["p10"][:PREDICTION_LENGTH]
+        pred_p90 = pred_quantiles["p90"][:PREDICTION_LENGTH]
 
         all_preds.append(pred)
         all_true.append(y_future[i])
@@ -113,18 +152,25 @@ def main():
         for h in range(PREDICTION_LENGTH):
             ts = pd.Timestamp(times[i, h])
             csv_rows.append({
+                "station_id": str(station_ids[i]),
                 "datetime": ts, "hour": ts.hour,
                 "lead_time_h": h + 1,
                 "forecast_start": forecast_start,
                 "CAF_true": float(y_future[i, h]),
+                "CAF_p10": float(pred_p10[h]),
                 "CAF_pred": float(pred[h]),
+                "CAF_p90": float(pred_p90[h]),
             })
 
         if i % 20 == 0:
             print(f"  {i}/{len(X_past)}")
 
     # ---- Save ----
-    df_out = pd.DataFrame(csv_rows).sort_values("datetime").reset_index(drop=True)
+    df_out = (
+        pd.DataFrame(csv_rows)
+        .sort_values(["station_id", "datetime", "lead_time_h"])
+        .reset_index(drop=True)
+    )
     df_out.to_csv(RESULTS_DIR / "finetuned_predictions.csv", index=False)
     df_out.to_csv(RESULTS_DIR / "finetuned_predictions_moirai2.csv", index=False)
 

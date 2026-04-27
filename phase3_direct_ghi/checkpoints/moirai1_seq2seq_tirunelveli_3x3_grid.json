@@ -1,0 +1,9 @@
+{
+  "cluster": "tirunelveli_3x3_grid",
+  "model_family": "moirai1_seq2seq",
+  "base_model": "Salesforce/moirai-1.1-R-small",
+  "context_length": 72,
+  "prediction_length": 24,
+  "best_epoch": 2,
+  "best_val_loss": 0.015133110732390499
+}

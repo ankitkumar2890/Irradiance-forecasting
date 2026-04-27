@@ -1,12 +1,12 @@
 {
-  "base_model": "Salesforce/moirai-1.1-R-small",
+  "base_model": "Salesforce/moirai-1.1-R-large",
   "lora_rank": 16,
   "lora_alpha": 32,
   "target_modules": [
     "q_proj",
     "v_proj"
   ],
-  "best_val_mse": 0.015332754701375961,
-  "best_val_rmse": 0.12382550101403168,
+  "best_val_mse": 0.016067681834101677,
+  "best_val_rmse": 0.12675836001661459,
   "smoke_test": false
 }

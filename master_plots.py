@@ -231,6 +231,101 @@ def plot_two_week_comparison(
         plt.show()
     plt.close()
 
+
+def plot_prediction_interval_comparison(
+    time_array,
+    actual,
+    predicted,
+    predicted_p10,
+    predicted_p90,
+    start=None,
+    end=None,
+    window_days=7,
+    title="Windowed Actual vs Predicted GHI",
+    save_path=None,
+    n_points=None,
+    ghi_threshold=None,
+):
+    """Plot actual/predicted GHI with separate p10/p90 interval bounds."""
+    set_style()
+
+    times = pd.to_datetime(np.asarray(time_array))
+    actual = np.asarray(actual, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    predicted_p10 = np.asarray(predicted_p10, dtype=float)
+    predicted_p90 = np.asarray(predicted_p90, dtype=float)
+
+    if len(times) == 0:
+        raise ValueError("time_array is empty.")
+
+    order = np.argsort(times)
+    times = times[order]
+    actual = actual[order]
+    predicted = predicted[order]
+    predicted_p10 = predicted_p10[order]
+    predicted_p90 = predicted_p90[order]
+
+    if start is not None:
+        start_ts = pd.to_datetime(start)
+        if end is not None:
+            end_ts = pd.to_datetime(end)
+        else:
+            end_ts = start_ts + pd.Timedelta(days=window_days)
+        mask = (times >= start_ts) & (times < end_ts)
+    else:
+        start_ts = times[0]
+        end_ts = start_ts + pd.Timedelta(days=window_days)
+        mask = (times >= start_ts) & (times < end_ts)
+
+    times = times[mask]
+    actual = actual[mask]
+    predicted = predicted[mask]
+    predicted_p10 = predicted_p10[mask]
+    predicted_p90 = predicted_p90[mask]
+
+    if len(times) == 0:
+        raise ValueError("No data found in the requested comparison window.")
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    ax.plot(times, actual, label="Measured (Ground Truth)", color="dodgerblue", linewidth=2)
+    ax.plot(times, predicted, label="Predicted GHI", color="coral", linewidth=2, linestyle="--")
+    ax.plot(times, predicted_p10, label="Predicted GHI (P10)", color="#6a3d9a", linewidth=1.6, linestyle=":")
+    ax.plot(times, predicted_p90, label="Predicted GHI (P90)", color="#1b9e77", linewidth=1.6, linestyle=":")
+    ax.fill_between(
+        times,
+        predicted_p10,
+        predicted_p90,
+        color="gray",
+        alpha=0.18,
+        label="Prediction Interval (P10-P90)",
+    )
+    if ghi_threshold is not None:
+        ax.axhline(
+            ghi_threshold,
+            label=f"{ghi_threshold:.0f} W/m² threshold",
+            color="black",
+            linewidth=2.5,
+            linestyle=(0, (7, 2, 2, 2)),
+            alpha=0.95,
+        )
+
+    count = len(times) if n_points is None else n_points
+    ax.set_title(f"{title}\nN={count}", fontsize=16, weight="bold")
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel("Irradiance (W/m²)", fontsize=12)
+    ax.legend(fontsize=11, ncol=2)
+    ax.grid(True, alpha=0.25)
+    style_window_date_axis(ax, times)
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Prediction interval plot saved to: {save_path}")
+    else:
+        plt.show()
+    plt.close()
+
 def plot_4panel_evaluation(
     actual,
     predicted,

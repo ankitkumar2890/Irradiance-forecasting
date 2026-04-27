@@ -10,8 +10,21 @@ from hydra.utils import instantiate
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     DATASET_DIR, CHECKPOINT_DIR, RESULTS_DIR,
-    MODEL_ID, CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
+MODEL_ID, CONTEXT_LENGTH, PREDICTION_LENGTH, TARGET_DIM, FEAT_DIM,
 )
+
+QUANTILE_SAMPLE_COUNT = 256
+
+
+def _formatted_to_sample_horizon(formatted: torch.Tensor) -> torch.Tensor:
+    """Normalize formatted forecast tensors to [samples, horizon]."""
+    if formatted.ndim == 4:
+        return formatted[:, 0, :, 0]
+    if formatted.ndim == 3:
+        return formatted[:, 0, :]
+    if formatted.ndim == 2:
+        return formatted
+    raise RuntimeError(f"Unexpected formatted prediction shape: {tuple(formatted.shape)}")
 
 
 def main():
@@ -58,13 +71,15 @@ def main():
     X_future = np.load(DATASET_DIR / "X_future_val.npy")
     y_future = np.load(DATASET_DIR / "y_future_val.npy")
     times = np.load(DATASET_DIR / "times_val.npy", allow_pickle=True).astype("datetime64[ns]")
+    station_ids = np.load(DATASET_DIR / "station_ids_val.npy", allow_pickle=True)
 
     print(f"Validation windows: {len(X_past)}")
+    print(f"Stations: {sorted(set(station_ids.tolist()))}")
 
     # ---- Predict ----
     all_preds, all_true, csv_rows = [], [], []
 
-    def forecast_mean(target, feat_dynamic_real):
+    def forecast_quantiles(target, feat_dynamic_real):
         past_target = torch.tensor(
             target, dtype=torch.float32, device=device
         ).view(1, CONTEXT_LENGTH, TARGET_DIM)
@@ -83,8 +98,28 @@ def main():
             feat_dynamic,
             observed_feat,
         )
-        formatted = model._format_preds(16, distr.mean.unsqueeze(0), TARGET_DIM)
-        return formatted[:, 0, :].squeeze(0).detach().cpu().numpy()
+        formatted_mean = model._format_preds(16, distr.mean.unsqueeze(0), TARGET_DIM)
+        median = _formatted_to_sample_horizon(formatted_mean).squeeze(0)
+
+        try:
+            q10_raw = distr.icdf(torch.full_like(distr.mean, 0.1))
+            q90_raw = distr.icdf(torch.full_like(distr.mean, 0.9))
+            formatted_q10 = model._format_preds(16, q10_raw.unsqueeze(0), TARGET_DIM)
+            formatted_q90 = model._format_preds(16, q90_raw.unsqueeze(0), TARGET_DIM)
+            p10 = _formatted_to_sample_horizon(formatted_q10).squeeze(0)
+            p90 = _formatted_to_sample_horizon(formatted_q90).squeeze(0)
+        except Exception:
+            samples = distr.sample((QUANTILE_SAMPLE_COUNT,))
+            formatted_samples = model._format_preds(QUANTILE_SAMPLE_COUNT, samples, TARGET_DIM)
+            sample_horizon = _formatted_to_sample_horizon(formatted_samples)
+            p10 = torch.quantile(sample_horizon, 0.1, dim=0)
+            p90 = torch.quantile(sample_horizon, 0.9, dim=0)
+
+        return {
+            "p10": p10.detach().cpu().numpy(),
+            "p50": median.detach().cpu().numpy(),
+            "p90": p90.detach().cpu().numpy(),
+        }
 
     for i in range(len(X_past)):
         target = X_past[i, :, 0].astype(np.float32)
@@ -95,7 +130,10 @@ def main():
         forecast_start = pd.Timestamp(times[i, 0])
         context_start = forecast_start - pd.Timedelta(hours=CONTEXT_LENGTH)
 
-        pred = forecast_mean(target, dyn_feats)[:PREDICTION_LENGTH]
+        pred_quantiles = forecast_quantiles(target, dyn_feats)
+        pred = pred_quantiles["p50"][:PREDICTION_LENGTH]
+        pred_p10 = pred_quantiles["p10"][:PREDICTION_LENGTH]
+        pred_p90 = pred_quantiles["p90"][:PREDICTION_LENGTH]
 
         all_preds.append(pred)
         all_true.append(y_future[i])
@@ -103,18 +141,25 @@ def main():
         for h in range(PREDICTION_LENGTH):
             ts = pd.Timestamp(times[i, h])
             csv_rows.append({
+                "station_id": str(station_ids[i]),
                 "datetime": ts, "hour": ts.hour,
                 "lead_time_h": h + 1,
                 "forecast_start": forecast_start,
                 "CAF_true": float(y_future[i, h]),
+                "CAF_p10": float(pred_p10[h]),
                 "CAF_pred": float(pred[h]),
+                "CAF_p90": float(pred_p90[h]),
             })
 
         if i % 20 == 0:
             print(f"  {i}/{len(X_past)}")
 
     # ---- Save ----
-    df_out = pd.DataFrame(csv_rows).sort_values("datetime").reset_index(drop=True)
+    df_out = (
+        pd.DataFrame(csv_rows)
+        .sort_values(["station_id", "datetime", "lead_time_h"])
+        .reset_index(drop=True)
+    )
     df_out.to_csv(RESULTS_DIR / "finetuned_predictions.csv", index=False)
 
     all_preds = np.concatenate(all_preds)

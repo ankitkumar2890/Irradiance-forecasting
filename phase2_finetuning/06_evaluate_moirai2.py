@@ -13,9 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import DATASET_DIR, DOWNLOADS_DIR, RESULTS_DIR, PREDICTION_LENGTH, YEARS, FINETUNE_STATION
+from config import DATASET_DIR, MULTI_STATION_DOWNLOADS_DIR, RESULTS_DIR, PREDICTION_LENGTH, STATIONS, YEARS
 from master_metrics import calculate_metrics, print_metrics
-from master_plots import plot_4panel_evaluation, plot_two_week_comparison
+from master_plots import (
+    plot_4panel_evaluation,
+    plot_prediction_interval_comparison,
+    plot_two_week_comparison,
+)
 from export_pdf import build_finetuned_pdf
 
 
@@ -88,23 +92,17 @@ def choose_random_later_week_start(df, first_start, days=ONE_WEEK_DAYS, seed=RAN
 
 def load_measured_ghi():
     frames = []
-    for year in YEARS:
-        ghi_file = DOWNLOADS_DIR / f"ghi_{year}.csv"
-        if not ghi_file.exists():
-            fallback = Path(__file__).parent / "downloads1" / f"ghi_{year}.csv"
-            if fallback.exists():
-                ghi_file = fallback
-        df = pd.read_csv(ghi_file)
-        df["datetime"] = pd.to_datetime(df["datetime"])
-        df = normalize_ghi_to_hour_grid(df)
-        frames.append(df[["datetime", "w_ghr"]])
+    for station in STATIONS:
+        station_id = station["id"]
+        for year in YEARS:
+            ghi_file = MULTI_STATION_DOWNLOADS_DIR / station_id / f"ghi_{year}.csv"
+            df = pd.read_csv(ghi_file)
+            df["datetime"] = pd.to_datetime(df["datetime"])
+            df = normalize_ghi_to_hour_grid(df)
+            df["station_id"] = station_id
+            frames.append(df[["station_id", "datetime", "w_ghr"]])
     ghi = pd.concat(frames, ignore_index=True)
-    return ghi.drop_duplicates(subset=["datetime"]).sort_values("datetime")
-
-
-def _copy_if_exists(src: Path, dst: Path):
-    if src.exists():
-        shutil.copyfile(src, dst)
+    return ghi.drop_duplicates(subset=["station_id", "datetime"]).sort_values(["station_id", "datetime"])
 
 
 def parse_args():
@@ -170,11 +168,17 @@ def main():
     proc = pd.read_csv(DATASET_DIR / "processed_data_2017_2019.csv")
     proc["datetime"] = pd.to_datetime(proc["datetime"])
     ghi = load_measured_ghi()
-    proc = proc[["datetime", "clear_sky_ghi", "zenith_angle"]].drop_duplicates(subset=["datetime"])
+    proc = proc[["station_id", "datetime", "clear_sky_ghi", "zenith_angle"]].drop_duplicates(
+        subset=["station_id", "datetime"]
+    )
     df = (
-        df.merge(proc, on="datetime", how="left")
-        .merge(ghi, on="datetime", how="left")
-        .sort_values(["datetime", "lead_time_h"] if "lead_time_h" in df.columns else ["datetime"])
+        df.merge(proc, on=["station_id", "datetime"], how="left")
+        .merge(ghi, on=["station_id", "datetime"], how="left")
+        .sort_values(
+            ["station_id", "datetime", "lead_time_h"]
+            if "lead_time_h" in df.columns
+            else ["station_id", "datetime"]
+        )
         .reset_index(drop=True)
     )
     df = df.dropna(subset=["clear_sky_ghi", "zenith_angle", "w_ghr"])
@@ -185,6 +189,10 @@ def main():
 
     df["GHI_true"] = df["w_ghr"]
     df["GHI_pred"] = df["CAF_pred"] * df["clear_sky_ghi"]
+    if "CAF_p10" in df.columns:
+        df["GHI_pred_p10"] = df["CAF_p10"] * df["clear_sky_ghi"]
+    if "CAF_p90" in df.columns:
+        df["GHI_pred_p90"] = df["CAF_p90"] * df["clear_sky_ghi"]
 
     validation_df = df[df["GHI_true"] > ghi_filter_wm2].copy()
     print(f"Total rows: {len(df)}  Filtered rows (GHI_true > {ghi_filter_wm2:.0f}): {len(validation_df)}")
@@ -192,16 +200,21 @@ def main():
         print("No validation rows passed the post-reconstruction GHI filter.")
         return
 
-    first_week_start = df["datetime"].min()
-    first_week_plot_df = slice_window(df, first_week_start)
-    first_week_metrics_df = slice_window(validation_df, first_week_start)
-    random_week_start = choose_random_later_week_start(validation_df, first_week_start)
-    random_week_plot_df = slice_window(df, random_week_start)
-    random_week_metrics_df = slice_window(validation_df, random_week_start)
+    plot_station_id = (
+        validation_df["station_id"].value_counts().sort_values(ascending=False).index[0]
+    )
+    plot_df = df[df["station_id"] == plot_station_id].copy()
+    plot_validation_df = validation_df[validation_df["station_id"] == plot_station_id].copy()
+    first_week_start = plot_df["datetime"].min()
+    first_week_plot_df = slice_window(plot_df, first_week_start)
+    first_week_metrics_df = slice_window(plot_validation_df, first_week_start)
+    random_week_start = choose_random_later_week_start(plot_validation_df, first_week_start)
+    random_week_plot_df = slice_window(plot_df, random_week_start)
+    random_week_metrics_df = slice_window(plot_validation_df, random_week_start)
 
     proc_full = (
-        proc.merge(ghi, on="datetime", how="inner")
-        .sort_values("datetime")
+        proc.merge(ghi, on=["station_id", "datetime"], how="inner")
+        .sort_values(["station_id", "datetime"])
         .reset_index(drop=True)
     )
     proc_full["CAF_measured"] = np.where(
@@ -209,7 +222,7 @@ def main():
         (proc_full["w_ghr"] / proc_full["clear_sky_ghi"]).clip(0.0, 1.0),
         0.0,
     )
-    proc_full["CAF_persist_24h"] = proc_full["CAF_measured"].shift(PREDICTION_LENGTH)
+    proc_full["CAF_persist_24h"] = proc_full.groupby("station_id")["CAF_measured"].shift(PREDICTION_LENGTH)
     proc_full["GHI_persist_24h"] = proc_full["CAF_persist_24h"] * proc_full["clear_sky_ghi"]
     persist_eval = proc_full[
         (proc_full["w_ghr"] > ghi_filter_wm2) &
@@ -250,6 +263,7 @@ def main():
         master_ghi_m,
         title=f"MASTER GHI METRICS vs w_ghr (FILTER: measured GHI_true > {ghi_filter_wm2:.0f})",
     )
+    print(f"\n  Plot station for weekly figures: {plot_station_id}")
     print("\n  One-Week Window Metrics:")
     print_metrics(first_week_ghi_m, title="ONE-WEEK GHI METRICS", unit="W/m²")
     print("\n  Random Later One-Week Window Metrics:")
@@ -373,6 +387,34 @@ def main():
         metrics=random_week_ghi_m,
         ghi_threshold=ghi_filter_wm2,
     )
+    if {"GHI_pred_p10", "GHI_pred_p90"}.issubset(first_week_plot_df.columns):
+        plot_prediction_interval_comparison(
+            first_week_plot_df["datetime"].to_numpy(),
+            first_week_plot_df["GHI_true"].to_numpy(),
+            first_week_plot_df["GHI_pred"].to_numpy(),
+            first_week_plot_df["GHI_pred_p10"].to_numpy(),
+            first_week_plot_df["GHI_pred_p90"].to_numpy(),
+            start=first_week_start,
+            window_days=ONE_WEEK_DAYS,
+            title=f"Fine-Tuned Moirai 2.0 — One-Week GHI Prediction Interval ({plot_station_id})",
+            save_path=str(RESULTS_DIR / f"finetuned_two_week_prediction_interval{PRED_SUFFIX}.png"),
+            n_points=len(first_week_plot_df),
+            ghi_threshold=ghi_filter_wm2,
+        )
+    if {"GHI_pred_p10", "GHI_pred_p90"}.issubset(random_week_plot_df.columns):
+        plot_prediction_interval_comparison(
+            random_week_plot_df["datetime"].to_numpy(),
+            random_week_plot_df["GHI_true"].to_numpy(),
+            random_week_plot_df["GHI_pred"].to_numpy(),
+            random_week_plot_df["GHI_pred_p10"].to_numpy(),
+            random_week_plot_df["GHI_pred_p90"].to_numpy(),
+            start=random_week_start,
+            window_days=ONE_WEEK_DAYS,
+            title=f"Fine-Tuned Moirai 2.0 — Random Later One-Week GHI Prediction Interval ({plot_station_id})",
+            save_path=str(RESULTS_DIR / f"finetuned_random_two_week_prediction_interval{PRED_SUFFIX}.png"),
+            n_points=len(random_week_plot_df),
+            ghi_threshold=ghi_filter_wm2,
+        )
     plot_4panel_evaluation(
         df["GHI_true"].to_numpy(),
         df["GHI_pred"].to_numpy(),
@@ -383,11 +425,17 @@ def main():
     )
 
     validation_report = df[[
-        "datetime", "hour", "lead_time_h", "forecast_start",
-        "CAF_true", "CAF_pred", "clear_sky_ghi", "zenith_angle",
-        "GHI_true", "GHI_pred",
+        "station_id", "datetime", "hour", "lead_time_h", "forecast_start",
+        "CAF_true",
+        *([col for col in ["CAF_p10"] if col in df.columns]),
+        "CAF_pred",
+        *([col for col in ["CAF_p90"] if col in df.columns]),
+        "clear_sky_ghi", "zenith_angle",
+        "GHI_true",
+        *([col for col in ["GHI_pred_p10"] if col in df.columns]),
+        "GHI_pred",
+        *([col for col in ["GHI_pred_p90"] if col in df.columns]),
     ]].copy()
-    validation_report["station_id"] = FINETUNE_STATION
     validation_report.to_csv(RESULTS_DIR / f"validation_report_data{PRED_SUFFIX}.csv", index=False)
 
     std_csv = RESULTS_DIR / "validation_report_data.csv"

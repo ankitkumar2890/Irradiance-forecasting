@@ -6,8 +6,8 @@
     "q_proj",
     "v_proj"
   ],
-  "best_val_mse": 0.01310562714934349,
-  "best_val_rmse": 0.11447981109935276,
+  "best_val_mse": 0.028526099398732185,
+  "best_val_rmse": 0.1688967122200198,
   "smoke_test": false,
   "model_family": "moirai2"
 }

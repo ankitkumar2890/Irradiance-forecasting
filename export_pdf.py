@@ -134,14 +134,14 @@ def _cloudmapper_cover_page(pdf, metrics_model, metrics_baseline, station_id, ro
     plt.close(fig)
 
 
-def _finetuned_cover_page(pdf, metrics_model, station_id, row_count, generated_at, ghi_filter_wm2=20.0):
+def _finetuned_cover_page(pdf, metrics_model, station_label, row_count, generated_at, ghi_filter_wm2=20.0):
     plt.style.use(STYLE)
     fig = plt.figure(figsize=(11, 8.5))
     fig.patch.set_facecolor("#f7f9fc")
 
     fig.text(0.5, 0.76, "Fine-tuned Moirai Validation Report",
              ha="center", fontsize=28, fontweight="bold", color="#1a2e4a")
-    fig.text(0.5, 0.69, f"Train: 2017-2018  |  Validation: 2019  |  Station: {station_id}",
+    fig.text(0.5, 0.69, f"Train: 2017-2018  |  Validation: 2019  |  Scope: {station_label}",
              ha="center", fontsize=16, color="#3a5f8a")
     fig.text(0.5, 0.62, f"Generated: {generated_at}",
              ha="center", fontsize=12, color="#666666")
@@ -172,6 +172,29 @@ def _finetuned_cover_page(pdf, metrics_model, station_id, row_count, generated_a
 
     fig.text(0.5, 0.12, f"Filter: GHI_true > {ghi_filter_wm2:.0f} W/m²  |  Validation rows: {row_count:,}",
              ha="center", fontsize=11, color="#555555")
+
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _metrics_table_page(pdf, title, rows, col_labels):
+    plt.style.use(STYLE)
+    fig = plt.figure(figsize=(11, 8.5))
+    fig.patch.set_facecolor("#f7f9fc")
+
+    fig.text(0.5, 0.92, title, ha="center", fontsize=22, fontweight="bold", color="#1a2e4a")
+    ax_t = fig.add_axes([0.08, 0.12, 0.84, 0.72])
+    ax_t.axis("off")
+    tbl = ax_t.table(cellText=rows, colLabels=col_labels, loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1, 1.7)
+    for (r, c), cell in tbl.get_celld().items():
+        if r == 0:
+            cell.set_facecolor("#1a2e4a")
+            cell.set_text_props(color="white", fontweight="bold")
+        else:
+            cell.set_facecolor("#dde8f5" if r % 2 == 0 else "#ffffff")
 
     pdf.savefig(fig, bbox_inches="tight")
     plt.close(fig)
@@ -312,6 +335,109 @@ def _two_week_comparison_page(
                 cell.set_text_props(color="white", fontweight="bold")
             else:
                 cell.set_facecolor("#dde8f5" if r % 2 == 0 else "#ffffff")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _prediction_interval_page(
+    pdf,
+    times_,
+    actual_,
+    predicted_,
+    predicted_p10_,
+    predicted_p90_,
+    title,
+    window_days=7,
+    y_label="Irradiance (W/m²)",
+    metrics=None,
+    ghi_threshold=None,
+):
+    plt.style.use(STYLE)
+    times_ = pd.to_datetime(times_)
+    actual_ = np.asarray(actual_, dtype=float)
+    predicted_ = np.asarray(predicted_, dtype=float)
+    predicted_p10_ = np.asarray(predicted_p10_, dtype=float)
+    predicted_p90_ = np.asarray(predicted_p90_, dtype=float)
+
+    if len(times_) == 0:
+        raise ValueError("No time points available for the prediction interval PDF page.")
+
+    order = np.argsort(times_)
+    times_ = times_[order]
+    actual_ = actual_[order]
+    predicted_ = predicted_[order]
+    predicted_p10_ = predicted_p10_[order]
+    predicted_p90_ = predicted_p90_[order]
+
+    start_ts = times_[0]
+    end_ts = start_ts + pd.Timedelta(days=window_days)
+    mask = (times_ >= start_ts) & (times_ < end_ts)
+    times_ = times_[mask]
+    actual_ = actual_[mask]
+    predicted_ = predicted_[mask]
+    predicted_p10_ = predicted_p10_[mask]
+    predicted_p90_ = predicted_p90_[mask]
+
+    if len(times_) == 0:
+        raise ValueError("No rows fell inside the prediction interval PDF window.")
+
+    fig = plt.figure(figsize=(14, 8))
+    gs = gridspec.GridSpec(2, 1, figure=fig, height_ratios=[3, 1], hspace=0.25)
+    ax = fig.add_subplot(gs[0, 0])
+    ax.plot(times_, actual_, label="Measured (Ground Truth)", color="dodgerblue", linewidth=1.8, alpha=0.9)
+    ax.plot(times_, predicted_, label="Predicted GHI", color="coral", linewidth=1.8, linestyle="dashed")
+    ax.plot(times_, predicted_p10_, label="Predicted GHI (P10)", color="#6a3d9a", linewidth=1.5, linestyle=":")
+    ax.plot(times_, predicted_p90_, label="Predicted GHI (P90)", color="#1b9e77", linewidth=1.5, linestyle=":")
+    ax.fill_between(
+        times_,
+        predicted_p10_,
+        predicted_p90_,
+        color="gray",
+        alpha=0.18,
+        label="Prediction Interval (P10-P90)",
+    )
+    if ghi_threshold is not None:
+        ax.axhline(
+            ghi_threshold,
+            label=f"{ghi_threshold:.0f} W/m² threshold",
+            color="black",
+            linewidth=2.5,
+            linestyle=(0, (7, 2, 2, 2)),
+            alpha=0.95,
+        )
+
+    ax.set_title(f"{title}\nN={len(times_)}", fontsize=15, fontweight="bold")
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.legend(fontsize=10, ncol=2)
+    ax.grid(True, alpha=0.25)
+    _style_window_date_axis(ax, times_)
+
+    ax_tbl = fig.add_subplot(gs[1, 0])
+    ax_tbl.axis("off")
+    if metrics is not None:
+        rows = [
+            ("RMSE", f"{metrics['RMSE']:.2f}"),
+            ("nRMSE", f"{metrics['nRMSE']:.2f} %"),
+            ("MAE", f"{metrics['MAE']:.2f}"),
+            ("MAPE", f"{metrics['MAPE']:.2f} %"),
+        ]
+        table = ax_tbl.table(
+            cellText=rows,
+            colLabels=["Metric", "Value"],
+            loc="center",
+            cellLoc="center",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.scale(1, 1.4)
+        for (row, _), cell in table.get_celld().items():
+            if row == 0:
+                cell.set_facecolor("#1a2e4a")
+                cell.set_text_props(color="white", fontweight="bold")
+            else:
+                cell.set_facecolor("#dde8f5" if row % 2 == 0 else "#ffffff")
+
     pdf.savefig(fig, bbox_inches="tight")
     plt.close(fig)
 
@@ -554,22 +680,67 @@ def build_cloudmapper_pdf(results_dir):
     print(f"PDF saved → {out_pdf}")
 
 
-def build_finetuned_pdf(results_dir, ghi_filter_wm2=20.0):
+def build_finetuned_pdf(
+    results_dir,
+    ghi_filter_wm2=20.0,
+    csv_filename="validation_report_data.csv",
+    out_pdf_filename="finetuned_validation_report.pdf",
+    metrics_filename="evaluation_metrics.json",
+):
     results_dir = os.path.abspath(results_dir)
-    csv_path = os.path.join(results_dir, "validation_report_data.csv")
-    out_pdf = os.path.join(results_dir, "finetuned_validation_report.pdf")
+    csv_path = os.path.join(results_dir, csv_filename)
+    out_pdf = os.path.join(results_dir, out_pdf_filename)
+    metrics_path = os.path.join(results_dir, metrics_filename)
 
     df = pd.read_csv(csv_path, parse_dates=["datetime"])
     df_metrics = df[df["GHI_true"] > ghi_filter_wm2].copy()
     if df_metrics.empty:
         raise ValueError(f"No rows passed the validation filter (GHI_true > {ghi_filter_wm2:.0f} W/m²).")
 
+    metrics_json = {}
+    if os.path.exists(metrics_path):
+        with open(metrics_path, "r", encoding="utf-8") as fh:
+            metrics_json = json.load(fh)
+
     actual = df_metrics["GHI_true"].values
     predicted = df_metrics["GHI_pred"].values
     metrics_model = calculate_metrics(actual, predicted, mape_threshold=ghi_filter_wm2)
-    first_week_start = df["datetime"].min()
-    first_week_df = _slice_window(df, first_week_start)
-    first_week_metrics_df = _slice_window(df_metrics, first_week_start)
+    station_ids = sorted(df_metrics["station_id"].dropna().unique().tolist()) if "station_id" in df_metrics.columns else []
+    station_label = f"{len(station_ids)} stations ({', '.join(station_ids)})" if station_ids else "unknown"
+    plot_station_id = metrics_json.get("plot_station_id")
+    available_station_ids = (
+        set(df_metrics["station_id"].dropna().astype(str).unique())
+        if "station_id" in df_metrics.columns
+        else set()
+    )
+    # Reject a stale/foreign plot_station_id (e.g. left over in evaluation_metrics.json
+    # from a previous run with a different station layout) and fall back to the
+    # majority station actually present in the current validation CSV.
+    if plot_station_id is not None and str(plot_station_id) not in available_station_ids:
+        print(
+            f"  build_finetuned_pdf: metrics JSON plot_station_id='{plot_station_id}' is not "
+            f"present in the validation CSV; falling back to majority station."
+        )
+        plot_station_id = None
+    if not plot_station_id and available_station_ids:
+        plot_station_id = df_metrics["station_id"].value_counts().sort_values(ascending=False).index[0]
+
+    plot_df = df[df["station_id"] == plot_station_id].copy() if plot_station_id else df.copy()
+    plot_metrics_df = df_metrics[df_metrics["station_id"] == plot_station_id].copy() if plot_station_id else df_metrics.copy()
+    if plot_df.empty:
+        # Extreme safety net: no rows matched the resolved plot_station_id even after
+        # the fallback above. Plot against the unfiltered dataframe to keep the PDF
+        # generation resilient instead of crashing the whole evaluation.
+        print(
+            f"  build_finetuned_pdf: no rows for plot_station_id='{plot_station_id}' in the "
+            f"validation CSV; using the full dataset for weekly windows."
+        )
+        plot_df = df.copy()
+        plot_metrics_df = df_metrics.copy()
+
+    first_week_start = plot_df["datetime"].min()
+    first_week_df = _slice_window(plot_df, first_week_start)
+    first_week_metrics_df = _slice_window(plot_metrics_df, first_week_start)
     first_week_metrics = None
     if not first_week_metrics_df.empty:
         first_week_metrics = calculate_metrics(
@@ -578,9 +749,9 @@ def build_finetuned_pdf(results_dir, ghi_filter_wm2=20.0):
             mape_threshold=ghi_filter_wm2,
         )
 
-    random_week_start = _choose_random_later_week_start(df_metrics, first_week_start)
-    random_week_df = _slice_window(df, random_week_start)
-    random_week_metrics_df = _slice_window(df_metrics, random_week_start)
+    random_week_start = _choose_random_later_week_start(plot_metrics_df, first_week_start)
+    random_week_df = _slice_window(plot_df, random_week_start)
+    random_week_metrics_df = _slice_window(plot_metrics_df, random_week_start)
     random_week_metrics = None
     if not random_week_metrics_df.empty:
         random_week_metrics = calculate_metrics(
@@ -589,35 +760,85 @@ def build_finetuned_pdf(results_dir, ghi_filter_wm2=20.0):
             mape_threshold=ghi_filter_wm2,
         )
 
+    station_metric_rows = []
+    if "station_id" in df_metrics.columns:
+        for station_id, station_df in df_metrics.groupby("station_id", sort=True):
+            station_metrics = calculate_metrics(
+                station_df["GHI_true"].values,
+                station_df["GHI_pred"].values,
+                mape_threshold=ghi_filter_wm2,
+            )
+            station_metric_rows.append([
+                station_id,
+                f"{station_metrics['RMSE']:.2f}",
+                f"{station_metrics['nRMSE']:.2f} %",
+                f"{station_metrics['MAE']:.2f}",
+                f"{station_metrics['MAPE']:.2f} %",
+                f"{len(station_df):,}",
+            ])
+
     with PdfPages(out_pdf) as pdf:
         _finetuned_cover_page(
             pdf,
             metrics_model=metrics_model,
-            station_id=df_metrics["station_id"].iloc[0] if "station_id" in df_metrics.columns else "unknown",
+            station_label=station_label,
             row_count=len(df_metrics),
             generated_at=datetime.now().strftime("%d %b %Y  %H:%M"),
             ghi_filter_wm2=ghi_filter_wm2,
         )
+        if station_metric_rows:
+            _metrics_table_page(
+                pdf,
+                title=f"Per-Station GHI Metrics (Filter > {ghi_filter_wm2:.0f} W/m²)",
+                rows=station_metric_rows,
+                col_labels=["Station", "RMSE", "nRMSE", "MAE", "MAPE", "Rows"],
+            )
         _two_week_comparison_page(
             pdf,
-            first_week_df["datetime"].values if not first_week_df.empty else df["datetime"].values,
-            first_week_df["GHI_true"].values if not first_week_df.empty else df["GHI_true"].values,
-            first_week_df["GHI_pred"].values if not first_week_df.empty else df["GHI_pred"].values,
-            "Fine-tuned Moirai — One-Week Actual vs Predicted GHI",
+            first_week_df["datetime"].values if not first_week_df.empty else plot_df["datetime"].values,
+            first_week_df["GHI_true"].values if not first_week_df.empty else plot_df["GHI_true"].values,
+            first_week_df["GHI_pred"].values if not first_week_df.empty else plot_df["GHI_pred"].values,
+            f"Fine-tuned Moirai — One-Week Actual vs Predicted GHI ({plot_station_id})",
             window_days=ONE_WEEK_DAYS,
             metrics=first_week_metrics,
             ghi_threshold=ghi_filter_wm2,
         )
         _two_week_comparison_page(
             pdf,
-            random_week_df["datetime"].values if not random_week_df.empty else df["datetime"].values,
-            random_week_df["GHI_true"].values if not random_week_df.empty else df["GHI_true"].values,
-            random_week_df["GHI_pred"].values if not random_week_df.empty else df["GHI_pred"].values,
-            "Fine-tuned Moirai — Random Later One-Week Actual vs Predicted GHI",
+            random_week_df["datetime"].values if not random_week_df.empty else plot_df["datetime"].values,
+            random_week_df["GHI_true"].values if not random_week_df.empty else plot_df["GHI_true"].values,
+            random_week_df["GHI_pred"].values if not random_week_df.empty else plot_df["GHI_pred"].values,
+            f"Fine-tuned Moirai — Random Later One-Week Actual vs Predicted GHI ({plot_station_id})",
             window_days=ONE_WEEK_DAYS,
             metrics=random_week_metrics,
             ghi_threshold=ghi_filter_wm2,
         )
+        if {"GHI_pred_p10", "GHI_pred_p90"}.issubset(first_week_df.columns):
+            _prediction_interval_page(
+                pdf,
+                first_week_df["datetime"].values,
+                first_week_df["GHI_true"].values,
+                first_week_df["GHI_pred"].values,
+                first_week_df["GHI_pred_p10"].values,
+                first_week_df["GHI_pred_p90"].values,
+                f"Fine-tuned Moirai — One-Week GHI Prediction Interval ({plot_station_id})",
+                window_days=ONE_WEEK_DAYS,
+                metrics=first_week_metrics,
+                ghi_threshold=ghi_filter_wm2,
+            )
+        if {"GHI_pred_p10", "GHI_pred_p90"}.issubset(random_week_df.columns):
+            _prediction_interval_page(
+                pdf,
+                random_week_df["datetime"].values,
+                random_week_df["GHI_true"].values,
+                random_week_df["GHI_pred"].values,
+                random_week_df["GHI_pred_p10"].values,
+                random_week_df["GHI_pred_p90"].values,
+                f"Fine-tuned Moirai — Random Later One-Week GHI Prediction Interval ({plot_station_id})",
+                window_days=ONE_WEEK_DAYS,
+                metrics=random_week_metrics,
+                ghi_threshold=ghi_filter_wm2,
+            )
         _four_panel_page(
             pdf,
             df["GHI_true"].values,

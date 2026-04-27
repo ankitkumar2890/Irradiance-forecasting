@@ -1,0 +1,17 @@
+{
+  "base_model": "Salesforce/moirai-2.0-R-small",
+  "pipeline": "phase3_direct_ghi",
+  "cluster": "tirunelveli_3x3_grid_20km_spacing",
+  "target": "GHI_direct",
+  "ghi_scale_factor": 1000.0,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "target_modules": [
+    "q_proj",
+    "v_proj"
+  ],
+  "best_val_mse_scaled": 0.006496009882539511,
+  "best_val_rmse_wm2": 80.59782802619132,
+  "smoke_test": false,
+  "model_family": "moirai2"
+}

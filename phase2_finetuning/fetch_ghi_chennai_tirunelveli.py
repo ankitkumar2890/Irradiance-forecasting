@@ -1,13 +1,8 @@
 """
-Fetch hourly NREL NSRDB GHI CSVs for both Chennai and Tirunelveli.
+Fetch hourly NREL NSRDB GHI CSVs for all configured Phase 2 stations.
 
 Outputs:
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/chennai/ghi_2017.csv
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/chennai/ghi_2018.csv
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/chennai/ghi_2019.csv
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/tirunelveli/ghi_2017.csv
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/tirunelveli/ghi_2018.csv
-  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/tirunelveli/ghi_2019.csv
+  /Users/IRFAN/Desktop/moirai_finetuning/multi_station_ghi/<station_id>/ghi_<year>.csv
 
 Required env vars:
   NREL_API_KEY
@@ -23,13 +18,7 @@ import pandas as pd
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import NREL_API_KEY, NREL_EMAIL, PROJECT_ROOT, YEARS
-
-
-TARGET_STATIONS = [
-    {"id": "chennai", "lat": 13.08, "lon": 80.27},
-    {"id": "tirunelveli", "lat": 9.14, "lon": 77.92},
-]
+from config import NREL_API_KEY, NREL_EMAIL, PROJECT_ROOT, STATIONS, YEARS
 
 OUTPUT_ROOT = PROJECT_ROOT / "multi_station_ghi"
 
@@ -94,11 +83,11 @@ def fetch_nrel_ghi(year: int, lat: float, lon: float, out_path: Path) -> None:
 
 def main() -> None:
     print("=" * 72)
-    print("Fetching GHI for Chennai and Tirunelveli (2017, 2018, 2019)")
+    print(f"Fetching GHI for {len(STATIONS)} stations ({', '.join(s['id'] for s in STATIONS)})")
     print(f"Output root: {OUTPUT_ROOT}")
     print("=" * 72)
 
-    for station in TARGET_STATIONS:
+    for station in STATIONS:
         station_dir = OUTPUT_ROOT / station["id"]
         print(f"\n=== {station['id']} ({station['lat']}, {station['lon']}) ===")
         for year in YEARS:

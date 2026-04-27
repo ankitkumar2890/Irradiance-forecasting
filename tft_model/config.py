@@ -1,60 +1,111 @@
 """
-TFT Configuration — hyperparameters and paths.
+TFT configuration for the ERA5-based CAF forecasting pipeline.
 
-Reuses the same data directories and temporal split from the
-existing phase2_finetuning pipeline.
+This pipeline is self-contained inside ``tft_model/`` and does not reuse the
+``phase2_finetuning`` synthetic-cloud dataset.
 """
 import os
 from pathlib import Path
 
-# ── Directories ──────────────────────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent                      # tft_model/
-PROJECT_ROOT = BASE_DIR.parent                                  # moirai_finetuning/
-PHASE2_DIR = PROJECT_ROOT / "phase2_finetuning"
-
-# Reuse the existing dataset produced by 03_build_dataset.py
-DATASET_DIR = PHASE2_DIR / "dataset"
-
-# TFT-specific output dirs
+# ---- Directories ----
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+DOWNLOADS_DIR = BASE_DIR / "downloads"
+MULTI_STATION_DOWNLOADS_DIR = DOWNLOADS_DIR / "multi_station_era5"
+DATASET_DIR = BASE_DIR / "dataset"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
 RESULTS_DIR = BASE_DIR / "results"
 
-for d in [CHECKPOINT_DIR, RESULTS_DIR]:
+PHASE1_DIR = PROJECT_ROOT / "phase1_cloud_mapper"
+PHASE1_DOWNLOADS_DIR = PHASE1_DIR / "downloads"
+
+for d in [DOWNLOADS_DIR, MULTI_STATION_DOWNLOADS_DIR, DATASET_DIR, CHECKPOINT_DIR, RESULTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# ── Sequence geometry (must match 03_build_dataset.py) ───────────────────────
-PAST_STEPS = 72          # encoder length  (same as PAST_HOURS)
-FUTURE_STEPS = 24        # decoder / prediction length (same as FUTURE_HOURS)
+# Optional override for a raw ERA5 CSV that contains the requested columns.
+ERA5_SOURCE_FILE = Path(
+    os.environ.get(
+        "TFT_ERA5_SOURCE_FILE",
+        str(PHASE1_DOWNLOADS_DIR / "era5_2017_2019.csv"),
+    )
+)
 
-# Feature dimensions — derived from the .npy arrays
-#   X_past  shape: (N, 72, 8)  → 8 features (CAF + 7 covariates)
-#   X_future shape: (N, 24, 7) → 7 known-future covariates
-ENCODER_INPUT_DIM = 8     # CAF, clear_sky_ghi, cloud_cover, zenith, h_sin, h_cos, d_sin, d_cos
-DECODER_INPUT_DIM = 7     # clear_sky_ghi, cloud_cover, zenith, h_sin, h_cos, d_sin, d_cos
-TARGET_DIM = 1            # CAF (scalar)
+# ---- API keys ----
+NREL_API_KEY = os.environ.get("NREL_API_KEY", "")
+NREL_EMAIL = os.environ.get("NREL_EMAIL", "")
+CDSAPI_KEY = os.environ.get("CDSAPI_KEY", "")
 
-# Past-only features: CAF (index 0) — not available in the future
-NUM_PAST_ONLY_FEATURES = 1
-# Known-future features: indices 1..7 of X_past match X_future columns
-NUM_KNOWN_FEATURES = 7
+# ---- Stations ----
+STATIONS = [
+    {"id": "tirunelveli", "lat": 9.14, "lon": 77.92, "alt_m": 45.0},
+    {"id": "madurai", "lat": 9.93, "lon": 78.12, "alt_m": 101.0},
+    {"id": "coimbatore", "lat": 11.02, "lon": 76.96, "alt_m": 411.0},
+    {"id": "trichy", "lat": 10.79, "lon": 78.70, "alt_m": 88.0},
+    {"id": "chennai", "lat": 13.08, "lon": 80.27, "alt_m": 7.0},
+]
+STATION_IDS = [station["id"] for station in STATIONS]
 
-# ── TFT Architecture ────────────────────────────────────────────────────────
-HIDDEN_SIZE = 64          # hidden dimension across all sub-networks
-NUM_ATTENTION_HEADS = 4   # interpretable multi-head attention heads
-LSTM_LAYERS = 1           # LSTM encoder/decoder depth
-DROPOUT = 0.1             # dropout rate for GRN, attention, LSTM
+# ---- Data years and split ----
+YEARS = [2017, 2018, 2019]
+TRAIN_END = "2018-12-31 23:00"
+VAL_START = "2019-01-01 00:00"
+VAL_END = "2019-12-31 23:00"
+TEST_START = "2020-01-01 00:00"
 
-# ── Training ─────────────────────────────────────────────────────────────────
+# ---- Window geometry ----
+PAST_STEPS = 72
+FUTURE_STEPS = 24
+
+# ---- ERA5 feature mapping ----
+ERA5_CANONICAL_COLUMNS = {
+    "tcc": ("tcc", "total_cloud_cover"),
+    "lcc": ("lcc", "low_cloud_cover"),
+    "mcc": ("mcc", "medium_cloud_cover"),
+    "hcc": ("hcc", "high_cloud_cover"),
+    "u10": ("u10", "10m_u_component_of_wind", "u_component_of_wind_10m"),
+    "v10": ("v10", "10m_v_component_of_wind", "v_component_of_wind_10m"),
+}
+ERA5_FEATURE_COLUMNS = list(ERA5_CANONICAL_COLUMNS.keys())
+
+PAST_FEATURES = [
+    "CAF",
+    "clear_sky_ghi",
+    *ERA5_FEATURE_COLUMNS,
+    "zenith_angle",
+    "hour_sin",
+    "hour_cos",
+    "doy_sin",
+    "doy_cos",
+]
+FUTURE_FEATURES = [
+    "clear_sky_ghi",
+    *ERA5_FEATURE_COLUMNS,
+    "zenith_angle",
+    "hour_sin",
+    "hour_cos",
+    "doy_sin",
+    "doy_cos",
+]
+
+ENCODER_INPUT_DIM = len(PAST_FEATURES)
+DECODER_INPUT_DIM = len(FUTURE_FEATURES)
+TARGET_DIM = 1
+
+# ---- TFT architecture ----
+HIDDEN_SIZE = 64
+NUM_ATTENTION_HEADS = 4
+LSTM_LAYERS = 1
+DROPOUT = 0.1
+
+# ---- Training ----
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-5
 MAX_EPOCHS = 100
-PATIENCE = 10             # early-stopping patience (epochs without val improvement)
-GRADIENT_CLIP = 1.0       # max gradient norm
+PATIENCE = 10
+GRADIENT_CLIP = 1.0
+LOSS_FN = "mse"
 
-# ── Loss ─────────────────────────────────────────────────────────────────────
-LOSS_FN = "mse"           # "mse" or "huber"
-
-# ── Misc ─────────────────────────────────────────────────────────────────────
+# ---- Misc ----
 SEED = 42
-NUM_WORKERS = 0           # DataLoader workers (0 = main process)
+NUM_WORKERS = 0

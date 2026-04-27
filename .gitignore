@@ -45,3 +45,10 @@ phase2_era5_direct/dataset/
 phase2_era5_direct/downloads
 
 memory
+
+tft_model/downloads/
+tft_model/checkpoints/
+
+phase3_testing/__pycache__/
+phase3_testing/dataset/
+phase3_testing/downloads/

@@ -1,0 +1,13 @@
+torch
+numpy
+pandas
+pvlib
+requests
+python-dotenv
+peft
+datasets
+gluonts
+huggingface_hub
+matplotlib
+uni2ts @ git+https://github.com/SalesforceAIResearch/uni2ts.git
+

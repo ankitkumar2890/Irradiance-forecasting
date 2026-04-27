@@ -21,7 +21,7 @@ from config import (
     DOWNLOADS_DIR, CHECKPOINT_DIR,
     ERA5_FRACTION_COLS, ICON_COLS,
     HIDDEN_DIM, NUM_RES_BLOCKS, DROPOUT,
-    TRAIN_STATION_ID, VERSION,
+    STATIONS, TRAIN_STATION_ID, VERSION,
 )
 from features import build_all_features
 from model_architecture import TAFResNet
@@ -58,11 +58,28 @@ def generate_synthetic(years_label: str = "2017_2019") -> None:
     # Load ERA5
     era5 = pd.read_csv(DOWNLOADS_DIR / f"era5_{years_label}.csv")
     era5["datetime"] = to_ist_series(era5["datetime"])
+    configured_station_ids = [station["id"] for station in STATIONS]
     if TRAIN_STATION_ID and "station_id" in era5.columns:
         era5 = era5[era5["station_id"] == TRAIN_STATION_ID].copy()
         print(f"  ERA5 station filter: {TRAIN_STATION_ID} → {len(era5)} rows")
     elif "station_id" in era5.columns:
-        print(f"  ERA5 stations used: {sorted(era5['station_id'].dropna().unique())}")
+        available_station_ids = sorted(era5["station_id"].dropna().unique())
+        selected_station_ids = [
+            station_id for station_id in configured_station_ids if station_id in available_station_ids
+        ]
+        if not selected_station_ids:
+            raise RuntimeError(
+                "ERA5 input does not contain any configured stations. "
+                f"Expected one of: {configured_station_ids}"
+            )
+        era5 = era5[era5["station_id"].isin(selected_station_ids)].copy()
+        era5 = era5.sort_values(["station_id", "datetime"]).reset_index(drop=True)
+        print(f"  ERA5 stations used: {selected_station_ids}")
+        missing_station_ids = sorted(set(configured_station_ids) - set(selected_station_ids))
+        if missing_station_ids:
+            print(f"  WARNING: Missing ERA5 stations: {missing_station_ids}")
+    else:
+        era5 = era5.sort_values("datetime").reset_index(drop=True)
 
     # Feature engineering (same pipeline as training)
     era5, input_cols = build_all_features(era5)
@@ -139,6 +156,9 @@ def generate_synthetic(years_label: str = "2017_2019") -> None:
     print(f"\n  Synthetic statistics:")
     print(f"    cloud_cover    mean={synth_df['cloud_cover'].mean():.3f}  "
           f"std={synth_df['cloud_cover'].std():.3f}")
+    if "station_id" in synth_df.columns:
+        print(f"    stations       {sorted(synth_df['station_id'].dropna().unique().tolist())}")
+        print(f"    rows/station   {synth_df['station_id'].value_counts().sort_index().to_dict()}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "start": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "feat_dynamic_real": {
+      "feature": {
+        "feature": {
+          "dtype": "float32",
+          "_type": "Value"
+        },
+        "_type": "Sequence"
+      },
+      "_type": "Sequence"
+    },
+    "freq": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "item_id": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}

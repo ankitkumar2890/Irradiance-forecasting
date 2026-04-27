@@ -1,9 +1,9 @@
 """
-TFT Dataset — PyTorch Dataset wrapping the existing .npy sliding-window files.
+TFT Dataset — PyTorch Dataset wrapping the TFT-local .npy sliding-window files.
 
 Reads X_past_{split}.npy, X_future_{split}.npy, y_future_{split}.npy produced
-by phase2_finetuning/03_build_dataset.py and exposes them as (encoder_input,
-decoder_input, target) tensors suitable for the TFT model.
+by tft_model/03_build_dataset.py and exposes them as tensors suitable for the
+TFT model.
 """
 import numpy as np
 import torch
@@ -45,7 +45,7 @@ class CAFTimeSeriesDataset(Dataset):
 
         if not x_past_path.exists():
             raise FileNotFoundError(
-                f"Missing {x_past_path}. Run phase2_finetuning/03_build_dataset.py first."
+                f"Missing {x_past_path}. Run tft_model/03_build_dataset.py first."
             )
 
         self.X_past = np.load(x_past_path).astype(np.float32)
@@ -56,6 +56,10 @@ class CAFTimeSeriesDataset(Dataset):
         times_path = DATASET_DIR / f"times_{split}.npy"
         self.times = (
             np.load(times_path, allow_pickle=True) if times_path.exists() else None
+        )
+        station_ids_path = DATASET_DIR / f"station_ids_{split}.npy"
+        self.station_ids = (
+            np.load(station_ids_path, allow_pickle=True) if station_ids_path.exists() else None
         )
 
         assert len(self.X_past) == len(self.X_future) == len(self.y_future), (
