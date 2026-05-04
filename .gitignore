@@ -52,3 +52,14 @@ tft_model/checkpoints/
 phase3_testing/__pycache__/
 phase3_testing/dataset/
 phase3_testing/downloads/
+
+moirai/checkpoints
+moirai/dataset
+moirai/final_csv
+moirai/__pycache__
+
+chronos/__pycache__
+chronos/checkpoints
+chronos/dataset
+chronos/downloads
+chronos/final_csv

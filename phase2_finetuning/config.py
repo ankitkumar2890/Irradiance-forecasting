@@ -227,11 +227,33 @@ FUTURE_FEATURES = [
 ]
 
 # ---- Model ----
-MODEL_ID           = "Salesforce/moirai-1.1-R-large"
+# Per-variant overrides (consumed by moirai/moirai.py::resolve_model_id).
+# When you pass --variant moirai1, the CLI uses MODEL_ID_MOIRAI1 instead of MODEL_ID,
+# so we don't try to load a Moirai-2 checkpoint with the Moirai-1 loader.
+MODEL_ID_MOIRAI1   = "Salesforce/moirai-1.1-R-large"
+MODEL_ID_MOIRAI2   = "Salesforce/moirai-1.1-R-small"
+# Default backbone for Method 2 (small Moirai 2.0 - much faster on CPU than the 1.1-R-large).
+MODEL_ID           = MODEL_ID_MOIRAI2
 CONTEXT_LENGTH     = PAST_HOURS
 PREDICTION_LENGTH  = FUTURE_HOURS
 TARGET_DIM         = 1
 FEAT_DIM           = len(FUTURE_FEATURES)
+
+# ---- Window selection ----
+# Same semantics as phase2_era5_direct/config.py.
+ANCHOR_HOURS       = [6]
+MIN_PAST_DATES     = 1
+
+# ---- Eval column hints (consumed by moirai/functions/results.py) ----
+# NOTE: Method 2's processed CSV (``processed_data_2017_2019.csv``) uses the
+# PVLib naming convention ``clear_sky_ghi`` (not the NSRDB ``clearsky_ghi``).
+# This name is passed through to ``moirai/functions/preprocess.py::build_dataset_method2``
+# (via ``cmd_dataset`` in ``moirai/moirai.py``) so the schema check matches the
+# actual CSV. If you swap in a CSV that uses a different name, update this value
+# (and ``PAST_FEATURES`` / ``FUTURE_FEATURES`` above to match).
+TARGET_COL         = "CAF"
+CLEARSKY_GHI_COL   = "clear_sky_ghi"
+MEASURED_GHI_COL   = "w_ghr"
 
 # ---- LoRA Fine-Tuning ----
 LORA_RANK          = 16

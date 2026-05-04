@@ -266,10 +266,22 @@ FUTURE_FEATURES = [
 
 # ── Model ────────────────────────────────────────────────────────────────────
 MODEL_ID           = "Salesforce/moirai-2.0-R-small"
+# Per-variant overrides (consumed by moirai/moirai.py::resolve_model_id).
+MODEL_ID_MOIRAI1   = "Salesforce/moirai-1.1-R-base"
+MODEL_ID_MOIRAI2   = MODEL_ID
 CONTEXT_LENGTH     = PAST_HOURS
 PREDICTION_LENGTH  = FUTURE_HOURS
 TARGET_DIM         = 1          # Direct GHI (single univariate target)
 FEAT_DIM           = len(FUTURE_FEATURES)
+
+# ── Window selection ────────────────────────────────────────────────────────
+ANCHOR_HOURS       = [6]
+MIN_PAST_DATES     = 1
+
+# ── Eval column hints (consumed by moirai/functions/results.py) ──────────────
+TARGET_COL         = "w_ghr"
+CLEARSKY_GHI_COL   = "clearsky_ghi"
+MEASURED_GHI_COL   = "w_ghr"
 
 # ── LoRA Fine-Tuning ─────────────────────────────────────────────────────────
 LORA_RANK          = 16

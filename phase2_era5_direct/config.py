@@ -85,10 +85,22 @@ FUTURE_FEATURES = [
 
 # ---- Model ----
 MODEL_ID           = "Salesforce/moirai-1.1-R-base"
+# Per-variant overrides (consumed by moirai/moirai.py::resolve_model_id).
+# Set MODEL_ID_MOIRAI2 if you intend to ever pass --variant moirai2 for this method.
+MODEL_ID_MOIRAI1   = MODEL_ID
+MODEL_ID_MOIRAI2   = "Salesforce/moirai-2.0-R-small"
 CONTEXT_LENGTH     = PAST_HOURS
 PREDICTION_LENGTH  = FUTURE_HOURS
 TARGET_DIM         = 1
 FEAT_DIM           = len(FUTURE_FEATURES)
+
+# ---- Window selection ----
+# ANCHOR_HOURS is the list of allowed first-forecast-hours (local clock).
+# None  -> keep every hour (one window per timestamp).
+# [6]   -> legacy "one forecast per day at 06:00" behaviour.
+# [0,6,12,18] -> four forecasts per day.
+ANCHOR_HOURS       = [6]
+MIN_PAST_DATES     = 1
 
 # ---- LoRA Fine-Tuning ----
 LORA_RANK          = 16

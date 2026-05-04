@@ -1,0 +1,44 @@
+"""Standalone Chronos Method 3 config: direct GHI, multi-station, hourly."""
+
+from __future__ import annotations
+
+TRAIN_END = "2018-12-31 23:00"
+VAL_START = "2019-01-01 00:00"
+VAL_END = "2019-12-31 23:00"
+TEST_START = "2020-01-01 00:00"
+
+PAST_HOURS = 72
+FUTURE_HOURS = 24
+PREDICTION_LENGTH = FUTURE_HOURS
+TARGET_COL = "w_ghr"
+MEASURED_GHI_COL = "w_ghr"
+CLEARSKY_GHI_COL = "clearsky_ghi"
+ZENITH_COL = "zenith_angle"
+STATION_COL = "station_id"
+
+ANCHOR_HOURS = [0, 6, 12, 18]
+MIN_PAST_DATES = 1
+DAYLIGHT_ZENITH_DEG = 90.0
+TRAIN_GHI_MASK_WM2 = 20.0
+
+MODEL_ID = "amazon/chronos-bolt-small"
+MODEL_TYPE = "chronos-bolt"
+
+LORA_RANK = 16
+LORA_ALPHA = 32
+LORA_DROPOUT = 0.05
+LORA_TARGET_MODULES = ["q", "k", "v", "o"]
+
+FT_LR = 5e-5
+FT_WEIGHT_DECAY = 0.01
+FT_MAX_EPOCHS = 30
+FT_PATIENCE = 8
+FT_BATCH_SIZE = 64
+FT_GRADIENT_CLIP = 1.0
+FT_NUM_WORKERS = 0
+FT_LOG_EVERY = 1
+FT_SEED = 0
+STATION_BALANCED_SAMPLING = True
+
+DEFAULT_GHI_FILTER_WM2 = 20.0
+DEFAULT_NUM_SAMPLES = 64

@@ -384,8 +384,6 @@ def _prediction_interval_page(
     fig = plt.figure(figsize=(14, 8))
     gs = gridspec.GridSpec(2, 1, figure=fig, height_ratios=[3, 1], hspace=0.25)
     ax = fig.add_subplot(gs[0, 0])
-    ax.plot(times_, actual_, label="Measured (Ground Truth)", color="dodgerblue", linewidth=1.8, alpha=0.9)
-    ax.plot(times_, predicted_, label="Predicted GHI", color="coral", linewidth=1.8, linestyle="dashed")
     ax.plot(times_, predicted_p10_, label="Predicted GHI (P10)", color="#6a3d9a", linewidth=1.5, linestyle=":")
     ax.plot(times_, predicted_p90_, label="Predicted GHI (P90)", color="#1b9e77", linewidth=1.5, linestyle=":")
     ax.fill_between(
